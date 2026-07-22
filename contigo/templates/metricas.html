@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ContiGO — Métricas</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Sora:wght@700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static',filename='css/style.css') }}">
+</head>
+<body>
+<div class="wrap" style="max-width:1000px">
+  <h1 style="font-size:26px;margin-bottom:6px">📊 Métricas de la feria</h1>
+  <p style="color:var(--muted);font-size:14px;margin-bottom:26px">Datos en vivo de la sesión actual</p>
+
+  <div class="kpi-row" style="margin-bottom:26px">
+    <div class="kpi"><div class="kpi-lbl">Visitantes únicos</div><div class="kpi-n">{{ pv }}</div></div>
+    <div class="kpi"><div class="kpi-lbl">Cuentas creadas</div><div class="kpi-n" style="color:var(--brand-2)">{{ stats.u }}</div></div>
+    <div class="kpi"><div class="kpi-lbl">Solicitudes</div><div class="kpi-n" style="color:var(--warn)">{{ stats.s }}</div></div>
+    <div class="kpi"><div class="kpi-lbl">Documentos</div><div class="kpi-n" style="color:var(--ok)">{{ stats.a }}</div></div>
+  </div>
+
+  <div class="card card-pad">
+    <h2 style="font-size:18px;margin-bottom:16px">Eventos registrados</h2>
+    <table style="width:100%;border-collapse:collapse;font-size:14px">
+      <tr style="text-align:left;color:var(--muted);font-size:12px;text-transform:uppercase">
+        <th style="padding:9px 6px;border-bottom:1px solid var(--line)">Evento</th>
+        <th style="padding:9px 6px;border-bottom:1px solid var(--line)">Sesiones</th>
+        <th style="padding:9px 6px;border-bottom:1px solid var(--line)">% visitantes</th>
+        <th style="padding:9px 6px;border-bottom:1px solid var(--line)">Total</th>
+      </tr>
+      {% for e in eventos %}
+      <tr>
+        <td style="padding:9px 6px;border-bottom:1px solid var(--line)">{{ e.n }}</td>
+        <td style="padding:9px 6px;border-bottom:1px solid var(--line)"><b>{{ e.s }}</b></td>
+        <td style="padding:9px 6px;border-bottom:1px solid var(--line)">
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="flex:1;max-width:110px;height:6px;background:var(--line);border-radius:3px">
+              <div style="height:6px;width:{{ e.p }}%;background:var(--brand-2);border-radius:3px"></div></div>
+            <span style="font-size:12.5px">{{ e.p }}%</span></div>
+        </td>
+        <td style="padding:9px 6px;border-bottom:1px solid var(--line);color:var(--muted)">{{ e.t }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  <p style="color:var(--muted);font-size:13px;margin-top:20px">
+    Recarga la página para actualizar. Los datos están en <code>contigo.db</code>.</p>
+</div>
+</body></html>

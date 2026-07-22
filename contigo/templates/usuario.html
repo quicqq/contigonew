@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ContiGO — Encuentra tu profesional</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static',filename='css/style.css') }}">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-in">
+    <a href="/usuario" class="logo">
+      <div class="logo-mark">
+        <svg width="24" height="16" viewBox="0 0 92 60">
+          <circle cx="24" cy="13" r="8.5" fill="#fff"/><circle cx="50" cy="13" r="8.5" fill="#93c5fd"/>
+          <path d="M13 38c0-8.5 6.5-15 15-15s11.5 7.5 16 7.5 8.5-7.5 15-7.5 15 6.5 15 15-6.5 15-15 15-11.5-7.5-16-7.5-8.5 7.5-15 7.5-15-6.5-15-15z"
+                fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round"/></svg>
+      </div>
+      <div><div class="logo-name">Conti<span>GO</span></div><div class="logo-sub">Trámites sin complicaciones</div></div>
+    </a>
+    <nav class="nav">
+      <a href="#top" class="on">Inicio</a>
+      <a href="#profesionales">Profesionales</a>
+      <a href="#guias">Guías</a>
+      <a href="#" onclick="misSolicitudes();return false">Mis solicitudes</a>
+    </nav>
+    <div class="topbar-right">
+      <button class="icon-btn" onclick="misSolicitudes()" data-track="click_notif" title="Mis solicitudes">
+        <svg width="18" height="18" fill="none" stroke="#334155" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+        <span class="icon-badge" id="notifBadge" style="display:none">0</span>
+      </button>
+      <div class="user-chip">
+        <div class="avatar av-sm" id="uAv" style="background:#2563eb">U</div>
+        <span id="uName">Usuario</span>
+      </div>
+      <button class="icon-btn" onclick="logout()" title="Cerrar sesión">
+        <svg width="17" height="17" fill="none" stroke="#334155" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<div class="wrap" id="top">
+  <div class="grid-main">
+    <div class="stack">
+
+      <!-- HERO -->
+      <section class="hero">
+        <div class="hero-in">
+          <h1>¿Qué trámite necesitas resolver hoy?</h1>
+          <p>Conectamos tu necesidad con profesionales verificados. Describe tu caso y recibe ayuda el mismo día.</p>
+          <div class="hero-search">
+            <input type="text" id="q" placeholder="Ej: renovar licencia, sacar el RUC, visa de turismo…"
+                   onkeydown="if(event.key==='Enter')buscar()">
+            <button class="btn btn-primary" onclick="buscar()" data-track="click_buscar">
+              <svg width="16" height="16" fill="none" stroke="#fff" stroke-width="2.5" viewBox="0 0 24 24">
+                <circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+              Buscar
+            </button>
+          </div>
+          <div class="hero-chips">
+            <span class="lbl">Populares:</span>
+            <button class="chip" onclick="qFind('ruc')">RUC / SRI</button>
+            <button class="chip" onclick="qFind('licencia')">Licencia</button>
+            <button class="chip" onclick="qFind('visa')">Visa</button>
+            <button class="chip" onclick="qFind('notarial')">Notarial</button>
+          </div>
+          <div class="hero-trust">
+            <div><b>4.8★</b>Calificación media</div>
+            <div><b>&lt;2h</b>Primera respuesta</div>
+            <div><b>100%</b>Verificados</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- CTA PRINCIPAL -->
+      <section class="card card-pad" style="background:linear-gradient(135deg,#eff6ff,#f0f9ff);border-color:#bfdbfe">
+        <div style="display:flex;gap:20px;align-items:center;flex-wrap:wrap">
+          <div style="width:54px;height:54px;border-radius:15px;background:#2563eb;display:grid;place-items:center;flex-shrink:0">
+            <svg width="26" height="26" fill="none" stroke="#fff" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M12 5v14M5 12h14"/></svg>
+          </div>
+          <div style="flex:1;min-width:200px">
+            <h3 style="font-size:17px;margin-bottom:4px">¿No sabes a quién acudir?</h3>
+            <p style="font-size:13.5px;color:var(--ink-2)">Cuéntanos tu caso y te asignamos el profesional indicado.</p>
+          </div>
+          <button class="btn btn-primary btn-lg" onclick="solicitar()" data-track="click_solicitar_general">
+            Solicitar asesoría
+          </button>
+        </div>
+      </section>
+
+      <!-- PROFESIONALES -->
+      <section class="card card-pad" id="profesionales">
+        <div class="sec-head">
+          <div>
+            <h2>Profesionales disponibles</h2>
+            <p>Verificados por ContiGO. Elige y solicita tu servicio directamente.</p>
+          </div>
+        </div>
+        <div class="pro-grid" id="proGrid"></div>
+      </section>
+
+      <!-- GUÍAS EN VIDEO -->
+      <section class="card card-pad" id="guias">
+        <div class="sec-head">
+          <div>
+            <h2>Guías en video</h2>
+            <p>Aprende a hacerlo tú mismo. Gratis y paso a paso.</p>
+          </div>
+        </div>
+        <div class="vid-grid" id="vidGrid"></div>
+      </section>
+
+      <!-- CONFIANZA -->
+      <section class="card card-pad">
+        <div class="feat-grid">
+          <div class="feat"><div class="feat-ic"><svg width="19" height="19" fill="none" stroke="#2563eb" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/><path d="M9 12l2 2 4-4"/></svg></div>
+            <div><b>Identidad verificada</b><span>Título y matrícula validados</span></div></div>
+          <div class="feat"><div class="feat-ic"><svg width="19" height="19" fill="none" stroke="#2563eb" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
+            <div><b>Documentos cifrados</b><span>Solo tu asesor los ve</span></div></div>
+          <div class="feat"><div class="feat-ic"><svg width="19" height="19" fill="none" stroke="#2563eb" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></div>
+            <div><b>Respuesta rápida</b><span>Menos de 2 horas hábiles</span></div></div>
+          <div class="feat"><div class="feat-ic"><svg width="19" height="19" fill="none" stroke="#2563eb" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+            <div><b>Chat directo</b><span>Habla con tu asesor</span></div></div>
+        </div>
+      </section>
+    </div>
+
+    <!-- SIDEBAR -->
+    <aside class="stack">
+      <div class="card side-card">
+        <div class="profile-head">
+          <div class="avatar av-md" id="sAv" style="background:#2563eb">U</div>
+          <div style="min-width:0">
+            <div style="font-weight:700;font-size:15px" id="sName">Usuario</div>
+            <div style="font-size:12.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis" id="sMail">—</div>
+          </div>
+        </div>
+        <div style="margin-top:6px">
+          <div class="menu-row" onclick="misSolicitudes()" data-track="click_mis_solicitudes">
+            <div class="menu-ic" style="background:#eff6ff"><svg width="17" height="17" fill="none" stroke="#2563eb" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></div>
+            <div class="menu-tx"><b>Mis solicitudes</b><span>Estado y conversaciones</span></div>
+            <span class="menu-count" id="mcCount" style="display:none">0</span>
+          </div>
+          <div class="menu-row" onclick="verDocs()">
+            <div class="menu-ic" style="background:#ecfdf5"><svg width="17" height="17" fill="none" stroke="#059669" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg></div>
+            <div class="menu-tx"><b>Mis documentos</b><span>Archivos enviados</span></div>
+          </div>
+          <div class="menu-row" onclick="ayuda()">
+            <div class="menu-ic" style="background:#fffbeb"><svg width="17" height="17" fill="none" stroke="#d97706" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/></svg></div>
+            <div class="menu-tx"><b>¿Cómo funciona?</b><span>Guía rápida</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card side-card" style="background:linear-gradient(140deg,#1e3a8a,#2563eb);color:#fff;border:none">
+        <h3 style="color:#fff">¿Tienes una duda puntual?</h3>
+        <p style="font-size:13px;opacity:.9;margin-bottom:16px">Escríbenos y un asesor te responde hoy mismo.</p>
+        <button class="btn btn-block" style="background:#fff;color:var(--brand)" onclick="solicitar()" data-track="click_cta_sidebar">
+          Solicitar asesoría
+        </button>
+      </div>
+
+      <div class="card side-card">
+        <h3>Trámites frecuentes</h3>
+        <div id="topTramites" style="display:flex;flex-direction:column;gap:9px;font-size:13px"></div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<div class="overlay" id="ov" onclick="if(event.target===this)closeM()"><div class="modal" id="md"></div></div>
+<div class="toast" id="tst"></div>
+
+<script src="{{ url_for('static',filename='js/core.js') }}"></script>
+<script src="{{ url_for('static',filename='js/data.js') }}"></script>
+<script src="{{ url_for('static',filename='js/usuario.js') }}"></script>
+</body></html>
