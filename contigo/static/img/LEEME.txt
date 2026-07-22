@@ -1,2 +1,0 @@
-Pon aqui las fotos de tus profesionales.
-Luego en static/js/data.js cambia el campo foto a: /static/img/tu-foto.jpg
