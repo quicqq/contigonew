@@ -82,7 +82,9 @@ def init_db():
         CREATE TABLE IF NOT EXISTS documentos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             solicitud_id INTEGER NOT NULL,
-            nombre TEXT NOT NULL, entregado INTEGER DEFAULT 0, created_at TEXT NOT NULL
+            nombre TEXT NOT NULL, entregado INTEGER DEFAULT 0, created_at TEXT NOT NULL,
+            estado TEXT DEFAULT 'pendiente',   -- pendiente | enviado | aprobado | rechazado
+            archivo_nombre TEXT, archivo_path TEXT, motivo TEXT
         );
         CREATE TABLE IF NOT EXISTS movimientos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -107,6 +109,10 @@ def init_db():
         "ALTER TABLE solicitudes ADD COLUMN pagado_saldo REAL DEFAULT 0",
         "ALTER TABLE solicitudes ADD COLUMN entrega_nota TEXT",
         "ALTER TABLE solicitudes ADD COLUMN entrega_archivo TEXT",
+        "ALTER TABLE documentos ADD COLUMN estado TEXT DEFAULT 'pendiente'",
+        "ALTER TABLE documentos ADD COLUMN archivo_nombre TEXT",
+        "ALTER TABLE documentos ADD COLUMN archivo_path TEXT",
+        "ALTER TABLE documentos ADD COLUMN motivo TEXT",
     ]
     for ddl in migraciones:
         try:
@@ -403,7 +409,8 @@ def api_pedir_docs(sid):
     conn.execute("""INSERT INTO mensajes (solicitud_id,autor,autor_nombre,texto,tipo,created_at)
         VALUES (?,?,?,?,?,?)""", (sid, "experto", d.get("autor_nombre", "Asesor"), texto, "peticion_archivo", now()))
     for doc in docs:
-        conn.execute("INSERT INTO documentos (solicitud_id,nombre,created_at) VALUES (?,?,?)", (sid, doc, now()))
+        conn.execute("INSERT INTO documentos (solicitud_id,nombre,estado,created_at) VALUES (?,?,?,?)",
+                     (sid, doc, "pendiente", now()))
     conn.execute("UPDATE solicitudes SET estado='atendiendo' WHERE id=?", (sid,))
     conn.commit(); conn.close()
     return jsonify({"ok": True})
@@ -412,10 +419,80 @@ def api_pedir_docs(sid):
 @app.route("/api/solicitud/<int:sid>/documentos")
 def api_docs_lista(sid):
     conn = get_db()
-    rows = conn.execute("SELECT id,nombre,entregado FROM documentos WHERE solicitud_id=? ORDER BY id",
-                        (sid,)).fetchall()
+    rows = conn.execute("""SELECT id,nombre,estado,archivo_nombre,archivo_path,motivo
+        FROM documentos WHERE solicitud_id=? ORDER BY id""", (sid,)).fetchall()
     conn.close()
     return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/documento/<int:did>/enviar", methods=["POST"])
+def api_doc_enviar(did):
+    """El usuario sube el archivo para UN documento especifico de la lista."""
+    if "archivo" not in request.files or not request.files["archivo"].filename:
+        return jsonify({"ok": False, "error": "No se recibio ningun archivo"}), 400
+    f = request.files["archivo"]
+    ext = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else ""
+    if ext not in ALLOWED_EXT:
+        return jsonify({"ok": False, "error": f"Formato .{ext} no permitido"}), 400
+
+    conn = get_db()
+    doc = conn.execute("SELECT solicitud_id,nombre FROM documentos WHERE id=?", (did,)).fetchone()
+    if not doc:
+        conn.close(); return jsonify({"ok": False, "error": "Documento no existe"}), 404
+    sid = doc["solicitud_id"]
+
+    safe = secure_filename(f.filename)
+    stored = f"doc{did}_s{sid}_{int(datetime.now().timestamp())}_{safe}"
+    f.save(os.path.join(UPLOAD_DIR, stored))
+
+    conn.execute("""UPDATE documentos SET estado='enviado', archivo_nombre=?, archivo_path=?, motivo=NULL
+        WHERE id=?""", (safe, stored, did))
+    # Mensaje en el chat para que quede el registro visible
+    conn.execute("""INSERT INTO mensajes
+        (solicitud_id,autor,autor_nombre,texto,tipo,archivo_nombre,archivo_path,created_at)
+        VALUES (?,?,?,?,?,?,?,?)""",
+        (sid, "usuario", request.form.get("autor_nombre", "Usuario"),
+         f"Envié el documento: {doc['nombre']}", "archivo", safe, stored, now()))
+    conn.commit(); conn.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/documento/<int:did>/aprobar", methods=["POST"])
+def api_doc_aprobar(did):
+    d = request.get_json(silent=True) or {}
+    conn = get_db()
+    doc = conn.execute("SELECT solicitud_id,nombre FROM documentos WHERE id=?", (did,)).fetchone()
+    if not doc:
+        conn.close(); return jsonify({"ok": False, "error": "No existe"}), 404
+    conn.execute("UPDATE documentos SET estado='aprobado', motivo=NULL WHERE id=?", (did,))
+    conn.execute("""INSERT INTO mensajes (solicitud_id,autor,autor_nombre,texto,tipo,created_at)
+        VALUES (?,?,?,?,?,?)""",
+        (doc["solicitud_id"], "experto", d.get("autor_nombre", "Asesor"),
+         f"Documento aprobado: {doc['nombre']} ✓", "doc_aprobado", now()))
+    conn.commit(); conn.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/documento/<int:did>/rechazar", methods=["POST"])
+def api_doc_rechazar(did):
+    """El experto rechaza un documento: vuelve a 'pendiente' con un motivo."""
+    d = request.get_json(silent=True) or {}
+    motivo = (d.get("motivo") or "").strip() or "El documento no es válido, envíalo de nuevo."
+    conn = get_db()
+    doc = conn.execute("SELECT solicitud_id,nombre FROM documentos WHERE id=?", (did,)).fetchone()
+    if not doc:
+        conn.close(); return jsonify({"ok": False, "error": "No existe"}), 404
+    conn.execute("""UPDATE documentos SET estado='rechazado', motivo=?,
+        archivo_nombre=NULL, archivo_path=NULL WHERE id=?""", (motivo, did))
+    conn.execute("""INSERT INTO mensajes (solicitud_id,autor,autor_nombre,texto,tipo,created_at)
+        VALUES (?,?,?,?,?,?)""",
+        (doc["solicitud_id"], "experto", d.get("autor_nombre", "Asesor"),
+         f"Documento rechazado: {doc['nombre']}\nMotivo: {motivo}\nPor favor envíalo nuevamente.",
+         "doc_rechazado", now()))
+    conn.commit(); conn.close()
+    return jsonify({"ok": True})
+
+
 
 
 # ============================================================
@@ -502,9 +579,19 @@ def api_entregar(sid):
         return jsonify({"ok": False, "error": "Agrega una nota o un archivo de entrega"}), 400
 
     conn = get_db()
+    s = conn.execute("SELECT fase FROM solicitudes WHERE id=?", (sid,)).fetchone()
+    if not s:
+        conn.close(); return jsonify({"ok": False, "error": "No existe"}), 404
+    if s["fase"] == "completado":
+        conn.close(); return jsonify({"ok": False, "error": "El trámite ya fue confirmado y pagado"}), 409
+    es_correccion = (s["fase"] == "entregado")
+
     conn.execute("UPDATE solicitudes SET fase='entregado', entrega_nota=?, entrega_archivo=? WHERE id=?",
                  (nota, archivo_guardado, sid))
-    texto = "Entrega del trámite. Revisa y confirma para liberar el pago."
+    if es_correccion:
+        texto = "Entrega corregida. Revisa nuevamente y confirma para liberar el pago."
+    else:
+        texto = "Entrega del trámite. Revisa y confirma para liberar el pago."
     if nota: texto += f"\nNota: {nota}"
     conn.execute("""INSERT INTO mensajes
         (solicitud_id,autor,autor_nombre,texto,tipo,archivo_nombre,archivo_path,created_at)
@@ -513,7 +600,7 @@ def api_entregar(sid):
          (archivo_guardado.split("_", 3)[-1] if archivo_guardado else None),
          archivo_guardado, now()))
     conn.commit(); conn.close()
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "correccion": es_correccion})
 
 
 @app.route("/api/solicitud/<int:sid>/confirmar-entrega", methods=["POST"])
@@ -565,6 +652,7 @@ def api_confirmar_entrega(sid):
 
 @app.route("/api/solicitud/<int:sid>/subir", methods=["POST"])
 def api_subir(sid):
+    """Adjuntar un archivo suelto al chat. Sirve tanto al usuario como al experto."""
     if "archivo" not in request.files:
         return jsonify({"ok": False, "error": "No se recibio ningun archivo"}), 400
     f = request.files["archivo"]
@@ -574,20 +662,20 @@ def api_subir(sid):
     if ext not in ALLOWED_EXT:
         return jsonify({"ok": False, "error": f"Formato .{ext} no permitido"}), 400
 
+    autor = request.form.get("autor", "usuario")
+    if autor not in ("usuario", "experto"):
+        autor = "usuario"
+
     safe = secure_filename(f.filename)
-    stored = f"s{sid}_{int(datetime.now().timestamp())}_{safe}"
+    stored = f"s{sid}_{autor}_{int(datetime.now().timestamp())}_{safe}"
     f.save(os.path.join(UPLOAD_DIR, stored))
 
     conn = get_db()
     conn.execute("""INSERT INTO mensajes
         (solicitud_id,autor,autor_nombre,texto,tipo,archivo_nombre,archivo_path,created_at)
         VALUES (?,?,?,?,?,?,?,?)""",
-        (sid, "usuario", request.form.get("autor_nombre", "Usuario"),
-         f"Documento enviado: {safe}", "archivo", safe, stored, now()))
-    pend = conn.execute("SELECT id FROM documentos WHERE solicitud_id=? AND entregado=0 ORDER BY id LIMIT 1",
-                        (sid,)).fetchone()
-    if pend:
-        conn.execute("UPDATE documentos SET entregado=1 WHERE id=?", (pend["id"],))
+        (sid, autor, request.form.get("autor_nombre", "Usuario"),
+         f"Archivo: {safe}", "archivo", safe, stored, now()))
     conn.commit(); conn.close()
     return jsonify({"ok": True, "archivo": safe})
 
