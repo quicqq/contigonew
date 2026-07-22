@@ -39,7 +39,11 @@
     <button class="exp-tab on" onclick="tab('sol',this)">
       Solicitudes<span class="cnt" id="tabCnt" style="display:none">0</span>
     </button>
+    <button class="exp-tab" onclick="tab('open',this)">
+      Sin asignar<span class="cnt" id="tabOpen" style="display:none;background:var(--brand-2)">0</span>
+    </button>
     <button class="exp-tab" onclick="tab('serv',this)">Mis servicios</button>
+    <button class="exp-tab" onclick="tab('wallet',this)">Mi billetera</button>
     <button class="exp-tab" onclick="tab('perf',this)">Mi perfil</button>
   </div>
 </header>
@@ -86,6 +90,43 @@
           <p>Elige una de la lista para ver la conversación y responder.</p>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- ============ SIN ASIGNAR (tipo Uber) ============ -->
+  <div id="pane-open" style="display:none">
+    <div class="card card-pad">
+      <div class="sec-head">
+        <div><h2>Trámites sin asignar</h2>
+          <p>Solicitudes abiertas de la comunidad. Toma la que puedas atender y se te asigna al instante.</p></div>
+        <span class="badge b-info" id="openCount">0 disponibles</span>
+      </div>
+      <div id="openList" style="display:flex;flex-direction:column;gap:12px"></div>
+    </div>
+  </div>
+
+  <!-- ============ MI BILLETERA ============ -->
+  <div id="pane-wallet" style="display:none">
+    <div class="grid-main">
+      <div class="stack">
+        <div class="card" style="background:linear-gradient(135deg,#1e3a8a,#2563eb);color:#fff;padding:28px;border:none">
+          <div style="font-size:13px;opacity:.85;margin-bottom:6px">Saldo disponible</div>
+          <div style="font-family:'Sora',sans-serif;font-size:40px;font-weight:800" id="wBalance">$0.00</div>
+          <div style="font-size:12.5px;opacity:.8;margin-top:8px">Tus ingresos por trámites completados se acumulan aquí.</div>
+        </div>
+        <div class="card card-pad">
+          <h3 style="font-size:15px;margin-bottom:6px">Movimientos</h3>
+          <div id="wMovs" style="display:flex;flex-direction:column"></div>
+        </div>
+      </div>
+      <aside class="card side-card">
+        <h3>¿Cómo cobro?</h3>
+        <p style="font-size:13px;color:var(--muted);line-height:1.6">
+          Cuando el cliente confirma la entrega de un trámite, el pago retenido (anticipo + saldo)
+          se libera automáticamente a tu billetera.</p>
+        <div class="alert alert-info" style="margin-top:14px">
+          <span>🔒</span><span>El cliente no puede retener el pago para siempre: si desaparece tras la entrega, el sistema libera igual.</span></div>
+      </aside>
     </div>
   </div>
 
