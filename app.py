@@ -61,7 +61,8 @@ def init_db():
             tipo TEXT NOT NULL, descripcion TEXT NOT NULL,
             urgencia TEXT DEFAULT 'normal',
             estado TEXT NOT NULL DEFAULT 'nueva',
-            experto_username TEXT, created_at TEXT NOT NULL
+            experto_username TEXT, created_at TEXT NOT NULL,
+            precio REAL, pago_estado TEXT DEFAULT 'sin_cobro'
         );
         CREATE TABLE IF NOT EXISTS mensajes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,11 +72,27 @@ def init_db():
             archivo_nombre TEXT, archivo_path TEXT,
             leido INTEGER DEFAULT 0, created_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS documentos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            solicitud_id INTEGER NOT NULL,
+            nombre TEXT NOT NULL,
+            entregado INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             session_id TEXT, event_name TEXT, event_label TEXT, page TEXT, ts TEXT
         );
     """)
+    # Migraciones seguras para bases ya existentes (Railway)
+    for col, ddl in [
+        ("precio", "ALTER TABLE solicitudes ADD COLUMN precio REAL"),
+        ("pago_estado", "ALTER TABLE solicitudes ADD COLUMN pago_estado TEXT DEFAULT 'sin_cobro'"),
+    ]:
+        try:
+            conn.execute(ddl)
+        except sqlite3.OperationalError:
+            pass  # la columna ya existe
     for nombre, correo, username, pw, role, prof in [
         ("Usuario de Prueba", "user@contigo.ec", "user", "user", "usuario", None),
         ("Carlos Ramirez", "admin@contigo.ec", "admin", "admin", "experto", "Abogado / Gestor"),
@@ -281,7 +298,88 @@ def api_pedir_docs(sid):
     conn = get_db()
     conn.execute("""INSERT INTO mensajes (solicitud_id,autor,autor_nombre,texto,tipo,created_at)
         VALUES (?,?,?,?,?,?)""", (sid, "experto", d.get("autor_nombre", "Asesor"), texto, "peticion_archivo", now()))
+    for doc in docs:
+        conn.execute("INSERT INTO documentos (solicitud_id,nombre,created_at) VALUES (?,?,?)",
+                     (sid, doc, now()))
     conn.execute("UPDATE solicitudes SET estado='atendiendo' WHERE id=?", (sid,))
+    conn.commit(); conn.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/solicitud/<int:sid>/documentos")
+def api_docs_lista(sid):
+    """Lista de documentos pedidos y su estado de entrega."""
+    conn = get_db()
+    rows = conn.execute("SELECT id,nombre,entregado FROM documentos WHERE solicitud_id=? ORDER BY id",
+                        (sid,)).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/documento/<int:did>/entregado", methods=["POST"])
+def api_doc_marcar(did):
+    conn = get_db()
+    conn.execute("UPDATE documentos SET entregado=1 WHERE id=?", (did,))
+    conn.commit(); conn.close()
+    return jsonify({"ok": True})
+
+
+# ============================================================
+# PAGO (simulado)
+# ============================================================
+@app.route("/api/solicitud/<int:sid>/cobrar", methods=["POST"])
+def api_cobrar(sid):
+    """El experto fija el precio y solicita el pago al usuario."""
+    d = request.get_json(silent=True) or {}
+    try:
+        precio = float(d.get("precio", 0))
+    except (TypeError, ValueError):
+        precio = 0
+    if precio <= 0:
+        return jsonify({"ok": False, "error": "Indica un monto valido"}), 400
+
+    concepto = d.get("concepto", "Servicio de tramite").strip()
+    conn = get_db()
+    conn.execute("UPDATE solicitudes SET precio=?, pago_estado='pendiente' WHERE id=?", (precio, sid))
+    texto = (f"Solicitud de pago: ${precio:.2f}\n"
+             f"Concepto: {concepto}\n"
+             f"El pago queda protegido y solo se libera cuando confirmes que el tramite esta completo.")
+    conn.execute("""INSERT INTO mensajes (solicitud_id,autor,autor_nombre,texto,tipo,created_at)
+        VALUES (?,?,?,?,?,?)""",
+        (sid, "experto", d.get("autor_nombre", "Asesor"), texto, "solicitud_pago", now()))
+    conn.commit(); conn.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/solicitud/<int:sid>/pagar", methods=["POST"])
+def api_pagar(sid):
+    """El usuario 'paga' (simulado). El dinero queda en garantia."""
+    d = request.get_json(silent=True) or {}
+    conn = get_db()
+    sol = conn.execute("SELECT precio FROM solicitudes WHERE id=?", (sid,)).fetchone()
+    precio = sol["precio"] if sol and sol["precio"] else 0
+    conn.execute("UPDATE solicitudes SET pago_estado='en_garantia' WHERE id=?", (sid,))
+    metodo = d.get("metodo", "Tarjeta")
+    conn.execute("""INSERT INTO mensajes (solicitud_id,autor,autor_nombre,texto,tipo,created_at)
+        VALUES (?,?,?,?,?,?)""",
+        (sid, "usuario", d.get("autor_nombre", "Usuario"),
+         f"Pago realizado: ${precio:.2f} via {metodo}. El dinero esta en garantia.", "pago_hecho", now()))
+    conn.commit(); conn.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/solicitud/<int:sid>/liberar-pago", methods=["POST"])
+def api_liberar(sid):
+    """El usuario confirma trámite completo y libera el pago al experto."""
+    conn = get_db()
+    sol = conn.execute("SELECT precio FROM solicitudes WHERE id=?", (sid,)).fetchone()
+    precio = sol["precio"] if sol and sol["precio"] else 0
+    conn.execute("UPDATE solicitudes SET pago_estado='liberado', estado='completada' WHERE id=?", (sid,))
+    conn.execute("""INSERT INTO mensajes (solicitud_id,autor,autor_nombre,texto,tipo,created_at)
+        VALUES (?,?,?,?,?,?)""",
+        (sid, "usuario", "Usuario",
+         f"Pago liberado: ${precio:.2f} transferido al profesional. Tramite confirmado como completo.",
+         "pago_liberado", now()))
     conn.commit(); conn.close()
     return jsonify({"ok": True})
 
@@ -307,6 +405,11 @@ def api_subir(sid):
         VALUES (?,?,?,?,?,?,?,?)""",
         (sid, "usuario", request.form.get("autor_nombre", "Usuario"),
          f"Documento enviado: {safe}", "archivo", safe, stored, now()))
+    # Marca como entregado el primer documento pendiente de esa solicitud
+    pend = conn.execute("SELECT id FROM documentos WHERE solicitud_id=? AND entregado=0 ORDER BY id LIMIT 1",
+                        (sid,)).fetchone()
+    if pend:
+        conn.execute("UPDATE documentos SET entregado=1 WHERE id=?", (pend["id"],))
     conn.commit(); conn.close()
     return jsonify({"ok": True, "archivo": safe})
 
