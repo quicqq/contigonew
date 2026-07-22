@@ -265,7 +265,8 @@ function faseActions(s) {
   if (f === "en_curso")
     return `<button class="btn btn-primary btn-sm" onclick="entregar()">📦 Entregar trámite</button>`;
   if (f === "entregado")
-    return `<span style="font-size:12px;color:var(--brand-2)">Entregado. Esperando confirmación del cliente.</span>`;
+    return `<span style="font-size:12px;color:var(--brand-2);margin-right:8px">Entregado. Esperando confirmación.</span>
+            <button class="btn btn-ghost btn-sm" onclick="entregar()">✏️ Corregir entrega</button>`;
   if (f === "completado")
     return `<span class="badge b-done">✓ Completado y cobrado</span>`;
   return "";
@@ -288,9 +289,14 @@ function buildThreadShell(s) {
         <button class="btn btn-ghost btn-sm" onclick="pedirDocs()">📎 Pedir documentos</button>
         <span id="faseBtns"></span>
       </div>
+      <div id="expDocPanel"></div>
     </div>
     <div class="th-body" id="thBody"></div>
     <div class="th-bar">
+      <button class="btn btn-ghost" onclick="document.getElementById('expFile').click()" style="padding:11px 13px" title="Adjuntar archivo">
+        <svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21.4 11.05l-9.2 9.2a5 5 0 0 1-7.1-7.1l9.2-9.2a3.3 3.3 0 0 1 4.7 4.7l-9.2 9.2a1.7 1.7 0 0 1-2.3-2.3l8.5-8.5"/></svg>
+      </button>
+      <input type="file" id="expFile" style="display:none" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.webp,.heic" onchange="expUpFile(this)">
       <textarea id="thIn" rows="1" placeholder="Escribe tu respuesta…"
         onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendExp()}"></textarea>
       <button class="btn btn-primary" onclick="sendExp()" style="padding:11px 16px">
@@ -298,6 +304,96 @@ function buildThreadShell(s) {
       </button>
     </div>`;
   refreshThreadHead(s);
+  loadExpDocs();
+}
+
+/* ---------- Panel de documentos del experto (revisar/aprobar/rechazar) ---------- */
+async function loadExpDocs() {
+  if (!ACT) return;
+  const el = document.getElementById("expDocPanel");
+  if (!el) return;
+  try {
+    const docs = await (await fetch(`/api/solicitud/${ACT}/documentos`)).json();
+    if (!docs.length) { el.innerHTML = ""; return; }
+    const aprob = docs.filter(d => d.estado === "aprobado").length;
+    el.innerHTML = `
+      <div style="background:var(--bg);border:1px solid var(--line);border-radius:11px;padding:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <b style="font-size:12.5px">📋 Documentos (${aprob}/${docs.length} aprobados)</b>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:7px">
+          ${docs.map(d => expDocRow(d)).join("")}
+        </div>
+      </div>`;
+  } catch (e) { }
+}
+
+function expDocRow(d) {
+  const badge = {
+    pendiente: '<span class="badge b-info" style="font-size:10px;padding:2px 7px">Pendiente</span>',
+    enviado: '<span class="badge b-work" style="font-size:10px;padding:2px 7px">Por revisar</span>',
+    aprobado: '<span class="badge b-done" style="font-size:10px;padding:2px 7px">✓ Aprobado</span>',
+    rechazado: '<span class="badge b-new" style="font-size:10px;padding:2px 7px">Rechazado</span>'
+  }[d.estado] || "";
+  let acciones = "";
+  if (d.estado === "enviado") {
+    acciones = `
+      <a class="dl" href="/uploads/${encodeURIComponent(d.archivo_path)}" target="_blank" download style="padding:5px 10px;font-size:11.5px">⬇ Ver</a>
+      <button class="btn btn-ok btn-sm" style="padding:5px 11px;font-size:11.5px" onclick="aprobarDoc(${d.id})">Aprobar</button>
+      <button class="btn btn-ghost btn-sm" style="padding:5px 11px;font-size:11.5px;color:var(--dang);border-color:#fecaca" onclick="rechazarDoc(${d.id})">Rechazar</button>`;
+  } else if (d.estado === "aprobado" && d.archivo_path) {
+    acciones = `<a class="dl" href="/uploads/${encodeURIComponent(d.archivo_path)}" target="_blank" download style="padding:5px 10px;font-size:11.5px">⬇ Ver</a>`;
+  }
+  return `<div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:7px 0;border-bottom:1px solid var(--line)">
+    <span style="font-size:13px;flex:1;min-width:120px">${esc(d.nombre)}</span>
+    ${badge}
+    ${acciones}
+  </div>`;
+}
+
+async function aprobarDoc(did) {
+  await fetch(`/api/documento/${did}/aprobar`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ autor_nombre: ME.nombre })
+  });
+  toast("✓ Documento aprobado");
+  loadExpDocs(); loadThread();
+}
+
+function rechazarDoc(did) {
+  openM(`
+    <h2>Rechazar documento</h2>
+    <div class="sub">Se le pedirá al cliente que lo envíe de nuevo. Cuéntale por qué.</div>
+    <label style="margin-top:0">Motivo del rechazo</label>
+    <input type="text" id="rejMotivo" placeholder="Ej: La foto está borrosa / no es el documento correcto">
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-ghost" style="flex:1" onclick="closeM()">Cancelar</button>
+      <button class="btn btn-primary" style="flex:1" onclick="doRechazar(${did})">Rechazar y pedir de nuevo</button>
+    </div>`);
+}
+async function doRechazar(did) {
+  const motivo = document.getElementById("rejMotivo").value.trim();
+  await fetch(`/api/documento/${did}/rechazar`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ motivo, autor_nombre: ME.nombre })
+  });
+  closeM(); toast("Documento rechazado — se pidió de nuevo");
+  loadExpDocs(); loadThread();
+}
+
+async function expUpFile(inp) {
+  if (!inp.files?.[0] || !ACT) return;
+  const fd = new FormData();
+  fd.append("archivo", inp.files[0]);
+  fd.append("autor", "experto");
+  fd.append("autor_nombre", ME.nombre);
+  try {
+    const r = await fetch(`/api/solicitud/${ACT}/subir`, { method: "POST", body: fd });
+    const d = await r.json();
+    if (d.ok) { toast("📎 Archivo enviado"); loadThread(); }
+    else toast(d.error || "Error al subir");
+  } catch (e) { toast("Sin conexión"); }
+  inp.value = "";
 }
 
 function refreshThreadHead(s) {
@@ -307,6 +403,7 @@ function refreshThreadHead(s) {
   if (b) b.innerHTML = faseActions(s);
   const pt = document.getElementById("phaseTracker");
   if (pt) pt.innerHTML = phaseTrackerHTML(s.fase);
+  loadExpDocs();
 }
 
 function phaseTrackerHTML(fase) {
@@ -417,10 +514,15 @@ async function enviarAcuerdo() {
 /* ---------- FASE 4→5: ENTREGAR (comprobante) ---------- */
 function entregar() {
   if (!ACT) return toast("Selecciona una solicitud");
+  const s = SOLS.find(x => x.id === ACT);
+  const corr = s && s.fase === "entregado";
   track("abre_entregar");
   openM(`
-    <h2>📦 Entregar trámite</h2>
-    <div class="sub">Sube el comprobante de que completaste el trámite. El cliente lo revisa y confirma para liberar tu pago.</div>
+    <h2>${corr ? "✏️ Corregir entrega" : "📦 Entregar trámite"}</h2>
+    <div class="sub">${corr
+      ? "Reemplaza el comprobante anterior. El cliente verá la nueva versión y podrá confirmar."
+      : "Sube el comprobante de que completaste el trámite. El cliente lo revisa y confirma para liberar tu pago."}</div>
+    ${corr ? `<div class="alert alert-info" style="margin:0 0 14px"><span>ℹ️</span><span>Puedes corregir mientras el cliente no haya liberado el pago (p. ej. si olvidaste adjuntar algo).</span></div>` : ""}
     <label style="margin-top:0">Nota de entrega</label>
     <textarea id="enNota" placeholder="Ej: Trámite completado. Adjunto el documento final y el número de gestión #123456."></textarea>
     <label>Comprobante (documento resuelto, foto, captura)</label>
@@ -431,7 +533,7 @@ function entregar() {
     <input type="file" id="enFile" style="display:none" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.webp,.heic"
            onchange="document.getElementById('enFileName').textContent=this.files[0]?.name||'Seleccionar archivo'">
     <div class="alert alert-info" style="margin-top:14px"><span>🔒</span><span>El pago se libera solo cuando el cliente confirma que recibió el trámite. Así ninguno queda expuesto.</span></div>
-    <button class="btn btn-primary btn-block btn-lg" style="margin-top:18px" onclick="enviarEntrega()">Marcar como entregado</button>`);
+    <button class="btn btn-primary btn-block btn-lg" style="margin-top:18px" onclick="enviarEntrega()">${corr ? "Enviar corrección" : "Marcar como entregado"}</button>`);
 }
 async function enviarEntrega() {
   const nota = document.getElementById("enNota").value.trim();
@@ -441,8 +543,10 @@ async function enviarEntrega() {
   fd.append("nota", nota);
   fd.append("autor_nombre", ME.nombre);
   if (file) fd.append("archivo", file);
-  await fetch(`/api/solicitud/${ACT}/entregar`, { method: "POST", body: fd });
-  closeM(); toast("📦 Trámite entregado — esperando confirmación");
+  const r = await fetch(`/api/solicitud/${ACT}/entregar`, { method: "POST", body: fd });
+  const d = await r.json();
+  if (!d.ok) return toast(d.error || "No se pudo entregar");
+  closeM(); toast(d.correccion ? "✏️ Entrega corregida" : "📦 Trámite entregado — esperando confirmación");
   track("tramite_entregado");
   loadThread(); loadSols();
 }

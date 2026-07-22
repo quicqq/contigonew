@@ -188,80 +188,105 @@ async function enviarSolicitud(profNombre) {
 }
 
 /* ---------- MIS SOLICITUDES ---------- */
+let uSols = [], uInboxTimer = null;
+
 async function misSolicitudes() {
   track("abre_mis_solicitudes");
+  // Muestra la vista de bandeja a pantalla completa
+  document.getElementById("mainView").style.display = "none";
+  document.getElementById("inboxView").style.display = "";
+  window.scrollTo(0, 0);
+  await loadInbox();
+  if (uInboxTimer) clearInterval(uInboxTimer);
+  uInboxTimer = setInterval(loadInbox, 3500);
+}
+
+function cerrarBandeja() {
+  document.getElementById("inboxView").style.display = "none";
+  document.getElementById("mainView").style.display = "";
+  if (uInboxTimer) { clearInterval(uInboxTimer); uInboxTimer = null; }
+  stopChatPolling();
+  checkNotifs();
+}
+
+async function loadInbox() {
   try {
     const r = await fetch(`/api/mis-solicitudes?correo=${encodeURIComponent(ME.correo || ME.username)}&nombre=${encodeURIComponent(ME.nombre)}`);
-    const list = await r.json();
-    if (!list.length) {
-      return openM(`<h2>Mis solicitudes</h2>
-        <div class="empty">
-          <div class="empty-ic"><svg width="26" height="26" fill="none" stroke="#94a3b8" stroke-width="1.8" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></div>
-          <b>Aún no tienes solicitudes</b>
-          <p>Elige un profesional y solicita tu primer servicio.</p>
-          <button class="btn btn-primary" style="margin-top:18px" onclick="closeM();solicitar()">Solicitar asesoría</button>
-        </div>`);
-    }
-    openM(`<h2>Mis solicitudes</h2><div class="sub">Toca una para abrir el chat con tu asesor</div>
-      <div style="display:flex;flex-direction:column;gap:11px">
-        ${list.map(s => {
-          const b = s.estado === "nueva" ? ["b-new", "Enviada"] :
-                    s.estado === "atendiendo" ? ["b-work", "En atención"] : ["b-done", "Completada"];
-          return `<div style="border:1px solid var(--line);border-radius:12px;padding:15px;cursor:pointer;position:relative;transition:all .15s"
-               onmouseover="this.style.borderColor='var(--brand-2)'" onmouseout="this.style.borderColor='var(--line)'"
-               onclick="abrirChat(${s.id})">
-            <div style="display:flex;justify-content:space-between;align-items:start;gap:10px;margin-bottom:7px">
-              <div style="font-weight:600;font-size:14px">${esc(s.tipo)}</div>
-              <span class="badge ${b[0]}">${b[1]}</span>
-            </div>
-            <div style="font-size:12.5px;color:var(--muted);line-height:1.45;margin-bottom:9px">${esc(s.descripcion.slice(0, 110))}${s.descripcion.length > 110 ? "…" : ""}</div>
-            <div style="display:flex;justify-content:space-between;align-items:center;font-size:11.5px;color:var(--muted)">
-              <span>👤 ${esc(s.profesional_solicitado || "Asesor asignado")}</span>
-              <span>${timeAgo(s.created_at)}</span>
-            </div>
-            ${s.no_leidos > 0 ? `<span style="position:absolute;top:13px;right:13px;background:var(--dang);color:#fff;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:999px">${s.no_leidos} nuevo${s.no_leidos > 1 ? "s" : ""}</span>` : ""}
-          </div>`;
-        }).join("")}
-      </div>`, true);
-  } catch (e) { toast("Sin conexión al servidor"); }
+    uSols = await r.json();
+    renderInboxList();
+  } catch (e) { }
+}
+
+function renderInboxList() {
+  const el = document.getElementById("uSolList");
+  if (!el) return;
+  if (!uSols.length) {
+    el.innerHTML = `<div class="empty" style="padding:36px 18px">
+      <div class="empty-ic"><svg width="24" height="24" fill="none" stroke="#94a3b8" stroke-width="1.8" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></div>
+      <b>Aún no tienes trámites</b>
+      <p style="font-size:12.5px">Solicita un servicio para empezar.</p>
+      <button class="btn btn-primary btn-sm" style="margin-top:14px" onclick="cerrarBandeja();solicitar()">Solicitar asesoría</button>
+    </div>`;
+    return;
+  }
+  el.innerHTML = uSols.map(s => {
+    const est = s.estado === "nueva" ? "nueva" : s.estado === "completada" ? "completada" : "atendiendo";
+    return `<div class="sol ${est} ${chatId === s.id ? "on" : ""}" onclick="abrirChat(${s.id})">
+      <div class="sol-hd">
+        <div class="avatar av-sm" style="background:${avColor(s.profesional_solicitado || "A")};width:32px;height:32px;font-size:12px">${initials(s.profesional_solicitado || "AS")}</div>
+        <div style="flex:1;min-width:0">
+          <div class="sol-nm">${esc(s.tipo)}</div>
+          <div class="sol-tm">${timeAgo(s.created_at)}</div>
+        </div>
+        ${s.no_leidos ? `<span class="sol-unread">${s.no_leidos}</span>` : ""}
+      </div>
+      <div class="sol-dc">${esc(s.descripcion)}</div>
+      <div class="sol-meta"><span>👤 ${esc((s.profesional_solicitado || "Asesor").split("·")[0])}</span></div>
+    </div>`;
+  }).join("");
 }
 
 
-/* ---------- CHAT (basado en fases) ---------- */
+/* ---------- CHAT (basado en fases, dentro de la bandeja) ---------- */
 let chatId = null, chatTimer = null;
 let uRenderedIds = [], uFase = null;
 
-const U_FASE_TXT = {
-  cotizacion: "Cotización — negocia sin costo",
-  acuerdo: "Acuerdo propuesto — revisa y paga el anticipo",
-  en_curso: "Trámite en curso",
-  entregado: "Entregado — revisa y confirma",
-  completado: "Completado"
-};
-
 function abrirChat(sid) {
+  // Si la bandeja no está abierta (p. ej. tras enviar solicitud), ábrela
+  if (document.getElementById("inboxView").style.display === "none") {
+    closeM();
+    misSolicitudes().then(() => abrirChat(sid));
+    return;
+  }
   chatId = sid;
   uRenderedIds = [];
   uFase = null;
-  openM(`
-    <h2>Chat con tu asesor</h2>
-    <div class="sub">Solicitud #${sid}</div>
-    <div id="phaseBar"></div>
-    <div id="docPanel"></div>
-    <div id="actionPanel"></div>
-    <div class="chat-box" id="cbox"></div>
-    <div class="chat-bar">
-      <input type="text" id="cin" placeholder="Escribe tu mensaje…" onkeydown="if(event.key==='Enter')sendMsg()">
+  renderInboxList();
+  const th = document.getElementById("uThread");
+  th.innerHTML = `
+    <div class="th-head" style="flex-direction:column;align-items:stretch;gap:12px">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div class="th-info"><div class="th-nm" id="uThTipo">Trámite #${sid}</div>
+          <div class="th-mt" id="uThProf">Asesor</div></div>
+        <span id="uThFase"></span>
+      </div>
+      <div id="phaseBar"></div>
+      <div id="docPanel"></div>
+      <div id="actionPanel"></div>
+    </div>
+    <div class="th-body" id="cbox"></div>
+    <div class="th-bar">
+      <button class="btn btn-ghost" onclick="document.getElementById('cfile').click()" style="padding:11px 13px" title="Adjuntar archivo">
+        <svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21.4 11.05l-9.2 9.2a5 5 0 0 1-7.1-7.1l9.2-9.2a3.3 3.3 0 0 1 4.7 4.7l-9.2 9.2a1.7 1.7 0 0 1-2.3-2.3l8.5-8.5"/></svg>
+      </button>
+      <input type="file" id="cfile" style="display:none" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.webp,.heic" onchange="upFile(this)">
+      <textarea id="cin" rows="1" placeholder="Escribe tu mensaje…"
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg()}"></textarea>
       <button class="btn btn-primary" onclick="sendMsg()" style="padding:11px 16px">
         <svg width="17" height="17" fill="none" stroke="#fff" stroke-width="2" viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg>
       </button>
     </div>
-    <button class="file-btn" onclick="document.getElementById('cfile').click()" data-track="click_enviar_doc">
-      <svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21.4 11.05l-9.2 9.2a5 5 0 0 1-7.1-7.1l9.2-9.2a3.3 3.3 0 0 1 4.7 4.7l-9.2 9.2a1.7 1.7 0 0 1-2.3-2.3l8.5-8.5"/></svg>
-      Adjuntar documento
-    </button>
-    <input type="file" id="cfile" style="display:none" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.webp,.heic" onchange="upFile(this)">
-    <div id="upStat" style="font-size:12px;color:var(--muted);text-align:center;margin-top:8px"></div>`, true);
+    <div id="upStat" style="font-size:11px;color:var(--muted);text-align:center;padding:2px 0 6px"></div>`;
   loadMsgs(); loadDocs();
   if (chatTimer) clearInterval(chatTimer);
   chatTimer = setInterval(() => { loadMsgs(); loadDocs(); }, 3000);
@@ -285,10 +310,15 @@ async function loadMsgs() {
       nuevos.forEach(m => { box.insertAdjacentHTML("beforeend", uBubble(m)); uRenderedIds.push(m.id); });
       if (nearBottom) box.scrollTop = box.scrollHeight;
     }
-    if (d.solicitud && d.solicitud.fase !== uFase) {
-      uFase = d.solicitud.fase;
-      renderPhaseBar(d.solicitud);
-      renderActionPanel(d.solicitud);
+    if (d.solicitud) {
+      const tt = document.getElementById("uThTipo"), tp = document.getElementById("uThProf");
+      if (tt) tt.textContent = d.solicitud.tipo;
+      if (tp) tp.textContent = "👤 " + (d.solicitud.profesional_solicitado || "Asesor asignado");
+      if (d.solicitud.fase !== uFase) {
+        uFase = d.solicitud.fase;
+        renderPhaseBar(d.solicitud);
+        renderActionPanel(d.solicitud);
+      }
     }
   } catch (e) { }
 }
@@ -296,8 +326,17 @@ async function loadMsgs() {
 function uBubble(m) {
   if (m.tipo === "peticion_archivo")
     return `<div class="bubble bb-ask">📎 ${esc(m.texto)}<div class="bb-time">${hhmm(m.created_at)}</div></div>`;
-  if (m.tipo === "archivo")
-    return `<div class="bubble bb-file">📄 ${esc(m.archivo_nombre)}<div class="bb-time">Enviado ✓ · ${hhmm(m.created_at)}</div></div>`;
+  if (m.tipo === "archivo") {
+    const mine = m.autor === "usuario";
+    return `<div class="bubble ${mine ? "bb-file" : "bb-them"}" style="${mine ? "" : "align-self:flex-start"}">
+      <div style="font-weight:600">📄 ${esc(m.autor_nombre || (mine ? "Tú" : "Asesor"))}</div>
+      <a class="dl" href="/uploads/${encodeURIComponent(m.archivo_path)}" target="_blank" download>⬇ ${esc(m.archivo_nombre)}</a>
+      <div class="bb-time">${hhmm(m.created_at)}</div></div>`;
+  }
+  if (m.tipo === "doc_aprobado")
+    return `<div class="bubble bb-them" style="background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46">✓ ${esc(m.texto)}<div class="bb-time">${hhmm(m.created_at)}</div></div>`;
+  if (m.tipo === "doc_rechazado")
+    return `<div class="bubble bb-them" style="background:#fef2f2;border:1px solid #fecaca;color:#991b1b;white-space:pre-line">⚠️ ${esc(m.texto)}<div class="bb-time">${hhmm(m.created_at)}</div></div>`;
   if (m.tipo === "acuerdo")
     return `<div class="bubble bb-them" style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;white-space:pre-line">🤝 ${esc(m.texto)}<div class="bb-time">${hhmm(m.created_at)}</div></div>`;
   if (m.tipo === "entrega")
@@ -412,8 +451,9 @@ async function doPagarAnticipo(sid) {
     return toast(d.error || "No se pudo pagar");
   }
   track("anticipo_pagado");
+  closeM();
   toast("✅ Anticipo pagado — trámite iniciado");
-  abrirChat(sid);
+  uFase = null; loadMsgs(); refreshSaldo();
 }
 
 /* ---------- Confirmar entrega (paga saldo + libera) ---------- */
@@ -429,17 +469,17 @@ async function confirmarEntrega(sid) {
         <h2>Saldo insuficiente para el saldo final</h2>
         <div class="sub">Necesitas $${d.necesita.toFixed(2)} y tienes $${d.saldo.toFixed(2)}.</div>
         <button class="btn btn-primary btn-block btn-lg" style="margin-top:18px" onclick="abrirBilletera(${sid})">Depositar y volver</button>
-        <button class="btn btn-ghost btn-block" style="margin-top:8px" onclick="abrirChat(${sid})">Volver al chat</button>`);
+        <button class="btn btn-ghost btn-block" style="margin-top:8px" onclick="closeM()">Volver al chat</button>`);
     }
     return toast(d.error || "No se pudo confirmar");
   }
   track("entrega_confirmada");
   closeM();
   toast("🎉 ¡Trámite completado! Pago liberado al asesor");
-  checkNotifs();
+  uFase = null; loadMsgs(); loadInbox(); refreshSaldo();
 }
 
-/* ---------- DOCUMENTOS PENDIENTES ---------- */
+/* ---------- DOCUMENTOS: cada uno con su botón "Enviar" ---------- */
 async function loadDocs() {
   if (!chatId) return;
   const el = document.getElementById("docPanel");
@@ -448,23 +488,71 @@ async function loadDocs() {
     const r = await fetch(`/api/solicitud/${chatId}/documentos`);
     const docs = await r.json();
     if (!docs.length) { el.innerHTML = ""; return; }
-    const done = docs.filter(d => d.entregado).length;
+    const aprob = docs.filter(d => d.estado === "aprobado").length;
     el.innerHTML = `
       <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:14px;margin-bottom:12px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <div style="font-weight:700;font-size:13.5px;color:#92400e">📋 Documentos pendientes</div>
-          <span style="font-size:12px;color:#b45309;font-weight:600">${done}/${docs.length} entregados</span>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <div style="font-weight:700;font-size:13.5px;color:#92400e">📋 Documentos solicitados</div>
+          <span style="font-size:12px;color:#b45309;font-weight:600">${aprob}/${docs.length} aprobados</span>
         </div>
-        <div style="display:flex;flex-direction:column;gap:6px">
-          ${docs.map(d => `
-            <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:${d.entregado ? "#059669" : "#78350f"}">
-              <span style="font-size:14px">${d.entregado ? "✅" : "⬜"}</span>
-              <span style="${d.entregado ? "text-decoration:line-through;opacity:.7" : ""}">${esc(d.nombre)}</span>
-            </div>`).join("")}
+        <div style="display:flex;flex-direction:column;gap:9px">
+          ${docs.map(d => uDocRow(d)).join("")}
         </div>
-        ${done < docs.length ? `<div style="font-size:11.5px;color:#b45309;margin-top:8px">Usa "Adjuntar documento" para enviarlos.</div>` : ""}
+        <input type="file" id="docFileInput" style="display:none" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.webp,.heic" onchange="enviarDocFile(this)">
       </div>`;
   } catch (e) { }
+}
+
+function uDocRow(d) {
+  const st = {
+    pendiente: ["#78350f", "⬜", ""],
+    enviado: ["#1e40af", "🕓", "Enviado, en revisión"],
+    aprobado: ["#059669", "✅", "Aprobado"],
+    rechazado: ["#991b1b", "❌", "Rechazado"]
+  }[d.estado] || ["#78350f", "⬜", ""];
+
+  let boton = "";
+  if (d.estado === "pendiente" || d.estado === "rechazado")
+    boton = `<button class="btn btn-primary btn-sm" style="padding:5px 12px;font-size:12px" onclick="pickDocFile(${d.id})">${d.estado === "rechazado" ? "Reenviar" : "Enviar"}</button>`;
+  else if (d.estado === "enviado")
+    boton = `<span style="font-size:11px;color:#1e40af;font-weight:600">En revisión</span>`;
+  else if (d.estado === "aprobado")
+    boton = `<span style="font-size:15px">✅</span>`;
+
+  const motivo = (d.estado === "rechazado" && d.motivo)
+    ? `<div style="font-size:11.5px;color:#991b1b;margin-top:3px;padding-left:24px">Motivo: ${esc(d.motivo)}</div>` : "";
+
+  return `<div>
+    <div style="display:flex;align-items:center;gap:9px">
+      <span style="font-size:15px">${st[1]}</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:500;color:${st[0]}">${esc(d.nombre)}</div>
+        ${st[2] ? `<div style="font-size:11px;color:${st[0]};opacity:.85">${st[2]}</div>` : ""}
+      </div>
+      ${boton}
+    </div>
+    ${motivo}
+  </div>`;
+}
+
+let docPendienteId = null;
+function pickDocFile(did) {
+  docPendienteId = did;
+  document.getElementById("docFileInput").click();
+}
+async function enviarDocFile(inp) {
+  if (!inp.files?.[0] || !docPendienteId) return;
+  const fd = new FormData();
+  fd.append("archivo", inp.files[0]);
+  fd.append("autor_nombre", ME.nombre);
+  toast("Enviando documento…");
+  try {
+    const r = await fetch(`/api/documento/${docPendienteId}/enviar`, { method: "POST", body: fd });
+    const d = await r.json();
+    if (d.ok) { toast("✅ Documento enviado"); track("documento_enviado"); loadDocs(); loadMsgs(); }
+    else toast(d.error || "Error al enviar");
+  } catch (e) { toast("Sin conexión"); }
+  inp.value = ""; docPendienteId = null;
 }
 
 async function sendMsg() {
@@ -483,16 +571,17 @@ async function sendMsg() {
 async function upFile(inp) {
   if (!inp.files?.[0] || !chatId) return;
   const st = document.getElementById("upStat");
-  st.textContent = "Subiendo…";
+  if (st) st.textContent = "Subiendo…";
   const fd = new FormData();
   fd.append("archivo", inp.files[0]);
+  fd.append("autor", "usuario");
   fd.append("autor_nombre", ME.nombre);
   try {
     const r = await fetch(`/api/solicitud/${chatId}/subir`, { method: "POST", body: fd });
     const d = await r.json();
-    st.textContent = d.ok ? "✅ Documento enviado a tu asesor" : "⚠️ " + d.error;
-    if (d.ok) { track("documento_enviado", d.archivo); loadMsgs(); loadDocs(); }
-  } catch (e) { st.textContent = "⚠️ Sin conexión"; }
+    if (st) st.textContent = d.ok ? "✅ Archivo enviado" : "⚠️ " + d.error;
+    if (d.ok) { track("archivo_chat"); loadMsgs(); }
+  } catch (e) { if (st) st.textContent = "⚠️ Sin conexión"; }
   inp.value = "";
 }
 
