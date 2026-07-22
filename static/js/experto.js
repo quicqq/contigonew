@@ -2,7 +2,9 @@
    ContiGO — Panel del profesional
    ============================================================ */
 let ME = null, SOLS = [], FILT = "todas", ACT = null;
-let lastNew = 0, msgCount = -1, firstLoad = true;
+let lastNew = 0, firstLoad = true;
+let renderedMsgIds = [];   // IDs de mensajes ya pintados (para no repintar todo)
+let headBuilt = false;     // si ya se construyó la cabecera del hilo activo
 
 document.addEventListener("DOMContentLoaded", () => {
   ME = requireAuth("experto");
@@ -24,7 +26,7 @@ document.addEventListener("DOMContentLoaded", () => {
   renderServicios();
   loadSols();
   setInterval(loadSols, 3000);
-  setInterval(() => { if (ACT) loadThread(false); }, 3000);
+  setInterval(() => { if (ACT) loadThread(); }, 3000);
 });
 
 /* ---------- TABS ---------- */
@@ -45,11 +47,7 @@ async function loadSols() {
     const nuevas = SOLS.filter(s => s.estado === "nueva").length;
     const sinLeer = SOLS.reduce((a, s) => a + (s.no_leidos || 0), 0);
 
-    if (!firstLoad && (nuevas > lastNew)) {
-      toast("🔔 Nueva solicitud recibida");
-      beep();
-      flashTitle();
-    }
+    if (!firstLoad && nuevas > lastNew) { toast("🔔 Nueva solicitud recibida"); beep(); flashTitle(); }
     lastNew = nuevas; firstLoad = false;
 
     renderList();
@@ -59,14 +57,13 @@ async function loadSols() {
     const pend = nuevas + sinLeer;
     tc.textContent = pend; tc.style.display = pend ? "" : "none";
   } catch (e) {
-    document.getElementById("liveBadge").className = "badge b-new";
-    document.getElementById("liveBadge").innerHTML = "⚠️ Sin conexión";
+    const b = document.getElementById("liveBadge");
+    b.className = "badge b-new"; b.innerHTML = "⚠️ Sin conexión";
   }
 }
 
 function flashTitle() {
-  let n = 0;
-  const orig = document.title;
+  let n = 0; const orig = document.title;
   const t = setInterval(() => {
     document.title = (n % 2 ? "🔔 ¡Nueva solicitud!" : orig);
     if (++n > 6) { clearInterval(t); document.title = orig; }
@@ -81,9 +78,12 @@ function updateKPIs() {
 
   const at = SOLS.filter(s => s.estado !== "nueva").length;
   const docs = SOLS.reduce((a, s) => a + (s.archivos || 0), 0);
+  const cobrado = SOLS.filter(s => s.pago_estado === "liberado").reduce((a, s) => a + (s.precio || 0), 0);
   document.getElementById("statAt").textContent = at;
   document.getElementById("statDoc").textContent = docs;
   document.getElementById("statResp").textContent = SOLS.length ? Math.round(at / SOLS.length * 100) + "%" : "—";
+  const g = document.getElementById("statGan");
+  if (g) g.textContent = "$" + cobrado.toFixed(2);
 }
 
 /* ---------- LISTA ---------- */
@@ -111,6 +111,7 @@ function renderList() {
   el.innerHTML = list.map(s => {
     const urg = s.urgencia === "urgente" ? '<span class="badge b-new" style="font-size:10px;padding:2px 7px">Urgente</span>' :
                 s.urgencia === "pronto" ? '<span class="badge b-work" style="font-size:10px;padding:2px 7px">Pronto</span>' : "";
+    const pago = pagoChip(s.pago_estado, s.precio, true);
     return `<div class="sol ${s.estado} ${ACT === s.id ? "on" : ""}" onclick="openThread(${s.id})">
       <div class="sol-hd">
         <div class="avatar av-sm" style="background:${avColor(s.nombre)};width:32px;height:32px;font-size:12px">${initials(s.nombre)}</div>
@@ -125,20 +126,34 @@ function renderList() {
       <div class="sol-meta">
         <span>💬 ${s.total_msgs || 0}</span>
         ${s.archivos ? `<span>📎 ${s.archivos}</span>` : ""}
-        <span style="margin-left:auto">${esc((s.profesional_solicitado || "").split("·")[0])}</span>
+        ${pago ? `<span>${pago}</span>` : ""}
       </div>
     </div>`;
   }).join("");
 }
 
-/* ---------- HILO / CHAT ---------- */
-function openThread(id) {
-  ACT = id; msgCount = -1;
-  renderList();
-  loadThread(true);
+function pagoChip(estado, precio, mini) {
+  const p = precio ? "$" + Number(precio).toFixed(0) : "";
+  const map = {
+    pendiente:   ["b-work", "⏳ Pago pendiente " + p],
+    en_garantia: ["b-info", "🔒 En garantía " + p],
+    liberado:    ["b-done", "✓ Cobrado " + p],
+  };
+  const m = map[estado];
+  if (!m) return "";
+  return `<span class="badge ${m[0]}" style="${mini ? "font-size:10px;padding:2px 7px" : ""}">${m[1]}</span>`;
 }
 
-async function loadThread(scroll) {
+/* ---------- HILO / CHAT (con actualización incremental, sin parpadeo) ---------- */
+function openThread(id) {
+  ACT = id;
+  headBuilt = false;
+  renderedMsgIds = [];
+  renderList();
+  loadThread();
+}
+
+async function loadThread() {
   if (!ACT) return;
   try {
     const r = await fetch(`/api/solicitud/${ACT}/mensajes?marcar=experto`);
@@ -146,54 +161,90 @@ async function loadThread(scroll) {
     const s = d.solicitud;
     if (!s) return;
 
-    const th = document.getElementById("thread");
-    if (msgCount === -1) {
-      const badge = s.estado === "nueva" ? ["b-new", "Sin atender"] :
-                    s.estado === "atendiendo" ? ["b-work", "En proceso"] : ["b-done", "Completada"];
-      th.innerHTML = `
-        <div class="th-head">
-          <div class="avatar av-sm" style="background:${avColor(s.nombre)}">${initials(s.nombre)}</div>
-          <div class="th-info">
-            <div class="th-nm">${esc(s.nombre)}</div>
-            <div class="th-mt">${esc(s.tipo)} · ${esc(s.correo || "sin correo")} · #${s.id}</div>
-          </div>
-          <span class="badge ${badge[0]}" id="thBadge">${badge[1]}</span>
-          <div class="th-acts">
-            <button class="btn btn-ghost btn-sm" onclick="pedirDocs()">📎 Pedir documentos</button>
-            <button class="btn btn-ok btn-sm" onclick="marcar('completada')">✓ Completar</button>
-          </div>
-        </div>
-        <div class="th-body" id="thBody"></div>
-        <div class="th-bar">
-          <textarea id="thIn" rows="1" placeholder="Escribe tu respuesta…"
-            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendExp()}"></textarea>
-          <button class="btn btn-primary" onclick="sendExp()" style="padding:11px 16px">
-            <svg width="17" height="17" fill="none" stroke="#fff" stroke-width="2" viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg>
-          </button>
-        </div>`;
+    // --- Construir cabecera SOLO una vez por solicitud ---
+    if (!headBuilt) {
+      buildThreadShell(s);
+      headBuilt = true;
+    } else {
+      // Solo refrescar la barra de estado de pago (sin tocar el textarea)
+      refreshThreadHead(s);
     }
 
-    if (d.mensajes.length !== msgCount) {
-      msgCount = d.mensajes.length;
-      document.getElementById("thBody").innerHTML = d.mensajes.map(m => {
-        if (m.tipo === "peticion_archivo")
-          return `<div class="bubble bb-ask" style="align-self:flex-end">📎 ${esc(m.texto)}<div class="bb-time">${hhmm(m.created_at)}</div></div>`;
-        if (m.tipo === "archivo")
-          return `<div class="bubble bb-file" style="align-self:flex-start">
-            <div style="font-weight:600">📄 ${esc(m.autor_nombre)} envió un documento</div>
-            <a class="dl" href="/uploads/${encodeURIComponent(m.archivo_path)}" target="_blank" download>
-              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg>
-              ${esc(m.archivo_nombre)}</a>
-            <div class="bb-time">${hhmm(m.created_at)}</div></div>`;
-        return `<div class="bubble ${m.autor === "experto" ? "bb-me" : "bb-them"}">${esc(m.texto)}<div class="bb-time">${hhmm(m.created_at)}</div></div>`;
-      }).join("");
-      if (scroll !== false) {
-        const b = document.getElementById("thBody");
-        b.scrollTop = b.scrollHeight;
-      }
+    // --- Agregar solo los mensajes nuevos ---
+    const body = document.getElementById("thBody");
+    if (!body) return;
+    const nuevos = d.mensajes.filter(m => !renderedMsgIds.includes(m.id));
+    if (nuevos.length) {
+      const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 120;
+      nuevos.forEach(m => {
+        body.insertAdjacentHTML("beforeend", bubbleHTML(m));
+        renderedMsgIds.push(m.id);
+      });
+      if (nearBottom) body.scrollTop = body.scrollHeight;
     }
   } catch (e) { }
+}
+
+function buildThreadShell(s) {
+  const th = document.getElementById("thread");
+  th.innerHTML = `
+    <div class="th-head">
+      <div class="avatar av-sm" style="background:${avColor(s.nombre)}">${initials(s.nombre)}</div>
+      <div class="th-info">
+        <div class="th-nm">${esc(s.nombre)}</div>
+        <div class="th-mt">${esc(s.tipo)} · ${esc(s.correo || "sin correo")} · #${s.id}</div>
+      </div>
+      <span id="thPago"></span>
+      <div class="th-acts">
+        <button class="btn btn-ghost btn-sm" onclick="pedirDocs()">📎 Pedir documentos</button>
+        <button class="btn btn-ghost btn-sm" onclick="cobrar()" id="btnCobrar">💵 Cobrar</button>
+        <button class="btn btn-ok btn-sm" onclick="marcar('completada')">✓ Completar</button>
+      </div>
+    </div>
+    <div class="th-body" id="thBody"></div>
+    <div class="th-bar">
+      <textarea id="thIn" rows="1" placeholder="Escribe tu respuesta…"
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendExp()}"></textarea>
+      <button class="btn btn-primary" onclick="sendExp()" style="padding:11px 16px">
+        <svg width="17" height="17" fill="none" stroke="#fff" stroke-width="2" viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg>
+      </button>
+    </div>`;
+  refreshThreadHead(s);
+}
+
+function refreshThreadHead(s) {
+  const p = document.getElementById("thPago");
+  if (p) p.innerHTML = pagoChip(s.pago_estado, s.precio, false) ||
+    `<span class="badge ${s.estado === "nueva" ? "b-new" : s.estado === "atendiendo" ? "b-work" : "b-done"}">${
+      s.estado === "nueva" ? "Sin atender" : s.estado === "atendiendo" ? "En proceso" : "Completada"}</span>`;
+  // El botón cobrar se desactiva si ya hay cobro en curso
+  const bc = document.getElementById("btnCobrar");
+  if (bc) {
+    if (s.pago_estado && s.pago_estado !== "sin_cobro") {
+      bc.disabled = true;
+      bc.textContent = s.pago_estado === "liberado" ? "✓ Cobrado" : "💵 Cobro enviado";
+    } else {
+      bc.disabled = false; bc.textContent = "💵 Cobrar";
+    }
+  }
+}
+
+function bubbleHTML(m) {
+  if (m.tipo === "peticion_archivo")
+    return `<div class="bubble bb-ask" style="align-self:flex-end">📎 ${esc(m.texto)}<div class="bb-time">${hhmm(m.created_at)}</div></div>`;
+  if (m.tipo === "archivo")
+    return `<div class="bubble bb-file" style="align-self:flex-start">
+      <div style="font-weight:600">📄 ${esc(m.autor_nombre)} envió un documento</div>
+      <a class="dl" href="/uploads/${encodeURIComponent(m.archivo_path)}" target="_blank" download>
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg>
+        ${esc(m.archivo_nombre)}</a>
+      <div class="bb-time">${hhmm(m.created_at)}</div></div>`;
+  if (m.tipo === "solicitud_pago")
+    return `<div class="bubble" style="align-self:flex-end;background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46;white-space:pre-line">💵 ${esc(m.texto)}<div class="bb-time">${hhmm(m.created_at)}</div></div>`;
+  if (m.tipo === "pago_hecho" || m.tipo === "pago_liberado")
+    return `<div class="bubble" style="align-self:flex-start;background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a">✅ ${esc(m.texto)}<div class="bb-time">${hhmm(m.created_at)}</div></div>`;
+  return `<div class="bubble ${m.autor === "experto" ? "bb-me" : "bb-them"}">${esc(m.texto)}<div class="bb-time">${hhmm(m.created_at)}</div></div>`;
 }
 
 async function sendExp() {
@@ -206,7 +257,7 @@ async function sendExp() {
     body: JSON.stringify({ autor: "experto", autor_nombre: ME.nombre, texto: t })
   });
   track("experto_respondio");
-  msgCount = -1; loadThread(true); loadSols();
+  loadThread(); loadSols();
 }
 
 async function marcar(estado) {
@@ -216,8 +267,7 @@ async function marcar(estado) {
     body: JSON.stringify({ estado })
   });
   toast(estado === "completada" ? "✓ Solicitud completada" : "Estado actualizado");
-  track("estado_cambiado", estado);
-  msgCount = -1; loadThread(false); loadSols();
+  loadThread(); loadSols();
 }
 
 /* ---------- PEDIR DOCUMENTOS ---------- */
@@ -229,15 +279,15 @@ function pedirDocs() {
   track("abre_pedir_docs");
   openM(`
     <h2>Solicitar documentos</h2>
-    <div class="sub">El usuario los verá destacados en su chat y podrá subirlos ahí mismo.</div>
+    <div class="sub">El usuario los verá en su chat y podrá subirlos ahí mismo.</div>
     <label style="margin-top:0">Documentos frecuentes</label>
     <div class="doc-chips" id="chips">
-      ${DOCS_FRECUENTES.map(d => `<button class="dchip" onclick="tog(this,'${esc(d)}')">${esc(d)}</button>`).join("")}
+      ${DOCS_FRECUENTES.map(dd => `<button class="dchip" onclick="tog(this,'${esc(dd)}')">${esc(dd)}</button>`).join("")}
     </div>
     <label>Otros documentos (uno por línea)</label>
     <textarea id="dExtra" placeholder="Ej: Copia del contrato de arriendo&#10;Certificado laboral"></textarea>
     <label>Nota adicional (opcional)</label>
-    <input type="text" id="dNota" placeholder="Ej: Envíalos antes del viernes por favor">
+    <input type="text" id="dNota" placeholder="Ej: Envíalos antes del viernes">
     <div style="display:flex;gap:10px;margin-top:22px">
       <button class="btn btn-ghost" style="flex:1" onclick="closeM()">Cancelar</button>
       <button class="btn btn-primary" style="flex:1" onclick="enviarDocs()">Enviar solicitud</button>
@@ -260,7 +310,38 @@ async function enviarDocs() {
   closeM();
   toast("📎 Documentos solicitados");
   track("docs_solicitados", docs.length + " docs");
-  msgCount = -1; loadThread(true); loadSols();
+  loadThread(); loadSols();
+}
+
+/* ---------- COBRAR ---------- */
+function cobrar() {
+  if (!ACT) return toast("Selecciona una solicitud");
+  const s = SOLS.find(x => x.id === ACT);
+  track("abre_cobrar");
+  openM(`
+    <h2>💵 Cobrar por el servicio</h2>
+    <div class="sub">El usuario recibe la solicitud de pago en su chat. El dinero queda protegido en garantía hasta que confirme que el trámite está completo.</div>
+    <label style="margin-top:0">Concepto</label>
+    <input type="text" id="cConcepto" value="${esc(s ? s.tipo : "Servicio de trámite")}" placeholder="Ej: Renovación de licencia">
+    <label>Monto a cobrar (USD)</label>
+    <input type="number" id="cPrecio" min="1" step="0.01" placeholder="Ej: 30" style="font-size:18px;font-weight:700">
+    <div class="alert alert-info" style="margin-top:16px">
+      <span>🔒</span><span>Modelo de pago protegido: cobras con seguridad y el usuario paga con confianza.</span></div>
+    <button class="btn btn-primary btn-block btn-lg" style="margin-top:20px" onclick="enviarCobro()">Enviar solicitud de pago</button>`);
+}
+
+async function enviarCobro() {
+  const precio = parseFloat(document.getElementById("cPrecio").value);
+  const concepto = document.getElementById("cConcepto").value.trim();
+  if (!precio || precio <= 0) return toast("Indica un monto válido");
+  await fetch(`/api/solicitud/${ACT}/cobrar`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ precio, concepto, autor_nombre: ME.nombre })
+  });
+  closeM();
+  toast("💵 Solicitud de pago enviada");
+  track("cobro_enviado", "$" + precio);
+  loadThread(); loadSols();
 }
 
 /* ---------- SERVICIOS ---------- */

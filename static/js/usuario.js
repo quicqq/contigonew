@@ -209,13 +209,21 @@ async function misSolicitudes() {
 }
 
 /* ---------- CHAT ---------- */
-let chatId = null, chatTimer = null, chatCount = -1;
+let chatId = null, chatTimer = null;
+let uRenderedIds = [];      // mensajes ya pintados (evita repintar → sin parpadeo)
+let uHeadBuilt = false;     // cabecera del chat construida una sola vez
+let uPagoEstado = null;     // para detectar cambios en el pago
 
 function abrirChat(sid) {
-  chatId = sid; chatCount = -1;
+  chatId = sid;
+  uRenderedIds = [];
+  uHeadBuilt = false;
+  uPagoEstado = null;
   openM(`
     <h2>Chat con tu asesor</h2>
     <div class="sub">Solicitud #${sid} · Responde en tiempo real</div>
+    <div id="docPanel"></div>
+    <div id="payPanel"></div>
     <div class="chat-box" id="cbox"></div>
     <div class="chat-bar">
       <input type="text" id="cin" placeholder="Escribe tu mensaje…" onkeydown="if(event.key==='Enter')sendMsg()">
@@ -228,10 +236,11 @@ function abrirChat(sid) {
       Adjuntar documento (PDF, JPG, PNG)
     </button>
     <input type="file" id="cfile" style="display:none" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.webp,.heic" onchange="upFile(this)">
-    <div id="upStat" style="font-size:12px;color:var(--muted);text-align:center;margin-top:8px"></div>`);
+    <div id="upStat" style="font-size:12px;color:var(--muted);text-align:center;margin-top:8px"></div>`, true);
   loadMsgs();
+  loadDocs();
   if (chatTimer) clearInterval(chatTimer);
-  chatTimer = setInterval(loadMsgs, 3000);
+  chatTimer = setInterval(() => { loadMsgs(); loadDocs(); }, 3000);
 }
 
 window.stopChatPolling = function () {
@@ -246,16 +255,152 @@ async function loadMsgs() {
   try {
     const r = await fetch(`/api/solicitud/${chatId}/mensajes?marcar=usuario`);
     const d = await r.json();
-    if (d.mensajes.length === chatCount) return;
-    chatCount = d.mensajes.length;
-    box.innerHTML = d.mensajes.map(m => {
-      if (m.tipo === "peticion_archivo")
-        return `<div class="bubble bb-ask">📎 ${esc(m.texto)}<div class="bb-time">${hhmm(m.created_at)}</div></div>`;
-      if (m.tipo === "archivo")
-        return `<div class="bubble bb-file">📄 ${esc(m.archivo_nombre)}<div class="bb-time">Enviado ✓ · ${hhmm(m.created_at)}</div></div>`;
-      return `<div class="bubble ${m.autor === "usuario" ? "bb-me" : "bb-them"}">${esc(m.texto)}<div class="bb-time">${hhmm(m.created_at)}</div></div>`;
-    }).join("");
-    box.scrollTop = box.scrollHeight;
+
+    // --- Solo agregar mensajes nuevos (sin repintar → sin parpadeo) ---
+    const nuevos = d.mensajes.filter(m => !uRenderedIds.includes(m.id));
+    if (nuevos.length) {
+      const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+      nuevos.forEach(m => {
+        box.insertAdjacentHTML("beforeend", uBubble(m));
+        uRenderedIds.push(m.id);
+      });
+      if (nearBottom) box.scrollTop = box.scrollHeight;
+    }
+
+    // --- Refrescar panel de pago si cambió el estado ---
+    if (d.solicitud && d.solicitud.pago_estado !== uPagoEstado) {
+      uPagoEstado = d.solicitud.pago_estado;
+      renderPayPanel(d.solicitud);
+    }
+  } catch (e) { }
+}
+
+function uBubble(m) {
+  if (m.tipo === "peticion_archivo")
+    return `<div class="bubble bb-ask">📎 ${esc(m.texto)}<div class="bb-time">${hhmm(m.created_at)}</div></div>`;
+  if (m.tipo === "archivo")
+    return `<div class="bubble bb-file">📄 ${esc(m.archivo_nombre)}<div class="bb-time">Enviado ✓ · ${hhmm(m.created_at)}</div></div>`;
+  if (m.tipo === "solicitud_pago")
+    return `<div class="bubble bb-them" style="background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46;white-space:pre-line">💵 ${esc(m.texto)}<div class="bb-time">${hhmm(m.created_at)}</div></div>`;
+  if (m.tipo === "pago_hecho" || m.tipo === "pago_liberado")
+    return `<div class="bubble bb-me" style="background:#1e3a8a">✅ ${esc(m.texto)}<div class="bb-time">${hhmm(m.created_at)}</div></div>`;
+  return `<div class="bubble ${m.autor === "usuario" ? "bb-me" : "bb-them"}">${esc(m.texto)}<div class="bb-time">${hhmm(m.created_at)}</div></div>`;
+}
+
+/* ---------- PANEL DE PAGO (usuario) ---------- */
+function renderPayPanel(s) {
+  const el = document.getElementById("payPanel");
+  if (!el) return;
+  const p = s.precio ? Number(s.precio).toFixed(2) : "0.00";
+
+  if (s.pago_estado === "pendiente") {
+    el.innerHTML = `
+      <div style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:12px;padding:14px;margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+          <div><div style="font-weight:700;font-size:14px;color:#065f46">💵 Pago solicitado: $${p}</div>
+            <div style="font-size:12px;color:#047857;margin-top:2px">Tu dinero queda protegido hasta confirmar el trámite</div></div>
+          <button class="btn btn-ok btn-sm" onclick="pagar(${s.id})">Pagar ahora</button>
+        </div>
+      </div>`;
+  } else if (s.pago_estado === "en_garantia") {
+    el.innerHTML = `
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:14px;margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+          <div><div style="font-weight:700;font-size:14px;color:#1e3a8a">🔒 $${p} en garantía</div>
+            <div style="font-size:12px;color:#2563eb;margin-top:2px">Libera el pago cuando tu trámite esté completo</div></div>
+          <button class="btn btn-primary btn-sm" onclick="liberar(${s.id})">Trámite listo, liberar</button>
+        </div>
+      </div>`;
+  } else if (s.pago_estado === "liberado") {
+    el.innerHTML = `
+      <div style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:12px;padding:14px;margin-bottom:12px;text-align:center">
+        <div style="font-weight:700;font-size:14px;color:#065f46">✅ Pago de $${p} completado</div>
+        <div style="font-size:12px;color:#047857;margin-top:2px">¡Gracias! El trámite quedó cerrado.</div>
+      </div>`;
+  } else {
+    el.innerHTML = "";
+  }
+}
+
+async function pagar(sid) {
+  track("abre_pago");
+  openM(`
+    <h2>💳 Pagar servicio</h2>
+    <div class="sub">Pago protegido — el dinero solo se libera cuando confirmes que tu trámite está completo.</div>
+    <label style="margin-top:0">Método de pago</label>
+    <select id="payMet">
+      <option>Tarjeta de crédito/débito</option>
+      <option>Transferencia bancaria</option>
+      <option>Billetera móvil (Bimo, De Una)</option>
+    </select>
+    <label>Número de tarjeta</label>
+    <input type="text" placeholder="•••• •••• •••• ••••" maxlength="19" value="4242 4242 4242 4242">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div><label>Vencimiento</label><input type="text" placeholder="MM/AA" value="09/27"></div>
+      <div><label>CVV</label><input type="text" placeholder="•••" maxlength="4" value="123"></div>
+    </div>
+    <div class="alert alert-info" style="margin-top:16px">
+      <span>🔒</span><span>Demostración — no se procesa ningún cobro real.</span></div>
+    <button class="btn btn-ok btn-block btn-lg" style="margin-top:20px" onclick="confirmarPago(${sid})">Confirmar pago</button>`);
+}
+
+async function confirmarPago(sid) {
+  const metodo = document.getElementById("payMet").value;
+  await fetch(`/api/solicitud/${sid}/pagar`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ metodo, autor_nombre: ME.nombre })
+  });
+  track("pago_realizado");
+  closeM();
+  abrirChat(sid);   // reabre el chat ya con el estado "en garantía"
+  toast("✅ Pago realizado — en garantía");
+}
+
+async function liberar(sid) {
+  openM(`
+    <h2>Confirmar trámite completo</h2>
+    <div class="sub">Al liberar el pago, el dinero se transfiere a tu asesor. Hazlo solo si tu trámite está resuelto a tu satisfacción.</div>
+    <div class="alert alert-info"><span>💡</span><span>Esta acción cierra la solicitud y no se puede deshacer.</span></div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-ghost" style="flex:1" onclick="abrirChat(${sid})">Todavía no</button>
+      <button class="btn btn-ok" style="flex:1" onclick="confirmarLiberar(${sid})">Sí, liberar pago</button>
+    </div>`);
+}
+
+async function confirmarLiberar(sid) {
+  await fetch(`/api/solicitud/${sid}/liberar-pago`, { method: "POST" });
+  track("pago_liberado");
+  closeM();
+  toast("🎉 ¡Trámite completado! Gracias por usar ContiGO");
+  checkNotifs();
+}
+
+/* ---------- DOCUMENTOS PENDIENTES ---------- */
+async function loadDocs() {
+  if (!chatId) return;
+  const el = document.getElementById("docPanel");
+  if (!el) return;
+  try {
+    const r = await fetch(`/api/solicitud/${chatId}/documentos`);
+    const docs = await r.json();
+    if (!docs.length) { el.innerHTML = ""; return; }
+
+    const done = docs.filter(d => d.entregado).length;
+    el.innerHTML = `
+      <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:14px;margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div style="font-weight:700;font-size:13.5px;color:#92400e">📋 Documentos pendientes</div>
+          <span style="font-size:12px;color:#b45309;font-weight:600">${done}/${docs.length} entregados</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          ${docs.map(d => `
+            <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:${d.entregado ? "#059669" : "#78350f"}">
+              <span style="font-size:14px">${d.entregado ? "✅" : "⬜"}</span>
+              <span style="${d.entregado ? "text-decoration:line-through;opacity:.7" : ""}">${esc(d.nombre)}</span>
+            </div>`).join("")}
+        </div>
+        ${done < docs.length ? `<div style="font-size:11.5px;color:#b45309;margin-top:8px">Usa "Adjuntar documento" abajo para enviarlos.</div>` : ""}
+      </div>`;
   } catch (e) { }
 }
 
@@ -269,7 +414,7 @@ async function sendMsg() {
     body: JSON.stringify({ autor: "usuario", autor_nombre: ME.nombre, texto: t })
   });
   track("mensaje_enviado");
-  chatCount = -1; loadMsgs();
+  loadMsgs();
 }
 
 async function upFile(inp) {
@@ -283,7 +428,7 @@ async function upFile(inp) {
     const r = await fetch(`/api/solicitud/${chatId}/subir`, { method: "POST", body: fd });
     const d = await r.json();
     st.textContent = d.ok ? "✅ Documento enviado a tu asesor" : "⚠️ " + d.error;
-    if (d.ok) { track("documento_enviado", d.archivo); chatCount = -1; loadMsgs(); }
+    if (d.ok) { track("documento_enviado", d.archivo); loadMsgs(); loadDocs(); }
   } catch (e) { st.textContent = "⚠️ Sin conexión"; }
   inp.value = "";
 }
