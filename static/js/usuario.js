@@ -137,31 +137,49 @@ async function enviarSolicitud(profNombre) {
   btn.disabled = true; btn.textContent = "Enviando…";
 
   try {
+    const dirigida = !!profNombre;
     const r = await fetch("/api/solicitud", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         usuario_id: ME.id, nombre: ME.nombre, correo: ME.correo || ME.username,
         profesional: profNombre || "Cualquier experto disponible",
+        experto_username: dirigida ? "admin" : null,
         tipo, descripcion: desc, urgencia: urg
       })
     });
     const d = await r.json();
     if (!d.ok) { btn.disabled = false; btn.textContent = "Enviar solicitud"; return toast(d.error); }
 
-    track("solicitud_enviada", tipo);
-    openM(`
-      <div style="text-align:center;padding:14px 0">
-        <div style="width:66px;height:66px;border-radius:20px;background:var(--ok-bg);display:grid;place-items:center;margin:0 auto 18px">
-          <svg width="32" height="32" fill="none" stroke="#059669" stroke-width="2.5" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>
-        </div>
-        <h2 style="padding:0;margin-bottom:8px">¡Solicitud enviada!</h2>
-        <p style="font-size:14px;color:var(--muted);margin-bottom:6px">
-          Tu asesor ya la recibió y te responderá en el chat.</p>
-        <p style="font-size:12.5px;color:var(--muted)">Solicitud <b>#${d.id}</b></p>
-        <button class="btn btn-primary btn-block btn-lg" style="margin-top:24px" onclick="abrirChat(${d.id})">
-          Abrir chat con mi asesor</button>
-        <button class="btn btn-ghost btn-block" style="margin-top:9px" onclick="closeM()">Más tarde</button>
-      </div>`);
+    track("solicitud_enviada", dirigida ? "dirigida" : "abierta");
+    if (d.asignada) {
+      openM(`
+        <div style="text-align:center;padding:14px 0">
+          <div style="width:66px;height:66px;border-radius:20px;background:var(--ok-bg);display:grid;place-items:center;margin:0 auto 18px">
+            <svg width="32" height="32" fill="none" stroke="#059669" stroke-width="2.5" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>
+          </div>
+          <h2 style="padding:0;margin-bottom:8px">¡Solicitud enviada!</h2>
+          <p style="font-size:14px;color:var(--muted);margin-bottom:6px">
+            ${esc(profNombre)} ya recibió tu solicitud y te responderá en el chat.</p>
+          <p style="font-size:12.5px;color:var(--muted)">Solicitud <b>#${d.id}</b></p>
+          <button class="btn btn-primary btn-block btn-lg" style="margin-top:24px" onclick="abrirChat(${d.id})">
+            Abrir chat con mi asesor</button>
+          <button class="btn btn-ghost btn-block" style="margin-top:9px" onclick="closeM()">Más tarde</button>
+        </div>`);
+    } else {
+      openM(`
+        <div style="text-align:center;padding:14px 0">
+          <div style="width:66px;height:66px;border-radius:20px;background:var(--brand-light);display:grid;place-items:center;margin:0 auto 18px">
+            <svg width="32" height="32" fill="none" stroke="#2563eb" stroke-width="2.5" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/></svg>
+          </div>
+          <h2 style="padding:0;margin-bottom:8px">¡Trámite publicado!</h2>
+          <p style="font-size:14px;color:var(--muted);margin-bottom:6px">
+            Tu solicitud está abierta. Un profesional capacitado la tomará pronto y te escribirá por el chat.</p>
+          <p style="font-size:12.5px;color:var(--muted)">Solicitud <b>#${d.id}</b></p>
+          <button class="btn btn-primary btn-block btn-lg" style="margin-top:24px" onclick="abrirChat(${d.id})">
+            Abrir el chat</button>
+          <button class="btn btn-ghost btn-block" style="margin-top:9px" onclick="closeM()">Más tarde</button>
+        </div>`);
+    }
     checkNotifs();
   } catch (e) {
     btn.disabled = false; btn.textContent = "Enviar solicitud";
@@ -208,22 +226,29 @@ async function misSolicitudes() {
   } catch (e) { toast("Sin conexión al servidor"); }
 }
 
-/* ---------- CHAT ---------- */
+
+/* ---------- CHAT (basado en fases) ---------- */
 let chatId = null, chatTimer = null;
-let uRenderedIds = [];      // mensajes ya pintados (evita repintar → sin parpadeo)
-let uHeadBuilt = false;     // cabecera del chat construida una sola vez
-let uPagoEstado = null;     // para detectar cambios en el pago
+let uRenderedIds = [], uFase = null;
+
+const U_FASE_TXT = {
+  cotizacion: "Cotización — negocia sin costo",
+  acuerdo: "Acuerdo propuesto — revisa y paga el anticipo",
+  en_curso: "Trámite en curso",
+  entregado: "Entregado — revisa y confirma",
+  completado: "Completado"
+};
 
 function abrirChat(sid) {
   chatId = sid;
   uRenderedIds = [];
-  uHeadBuilt = false;
-  uPagoEstado = null;
+  uFase = null;
   openM(`
     <h2>Chat con tu asesor</h2>
-    <div class="sub">Solicitud #${sid} · Responde en tiempo real</div>
+    <div class="sub">Solicitud #${sid}</div>
+    <div id="phaseBar"></div>
     <div id="docPanel"></div>
-    <div id="payPanel"></div>
+    <div id="actionPanel"></div>
     <div class="chat-box" id="cbox"></div>
     <div class="chat-bar">
       <input type="text" id="cin" placeholder="Escribe tu mensaje…" onkeydown="if(event.key==='Enter')sendMsg()">
@@ -233,12 +258,11 @@ function abrirChat(sid) {
     </div>
     <button class="file-btn" onclick="document.getElementById('cfile').click()" data-track="click_enviar_doc">
       <svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21.4 11.05l-9.2 9.2a5 5 0 0 1-7.1-7.1l9.2-9.2a3.3 3.3 0 0 1 4.7 4.7l-9.2 9.2a1.7 1.7 0 0 1-2.3-2.3l8.5-8.5"/></svg>
-      Adjuntar documento (PDF, JPG, PNG)
+      Adjuntar documento
     </button>
     <input type="file" id="cfile" style="display:none" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.webp,.heic" onchange="upFile(this)">
     <div id="upStat" style="font-size:12px;color:var(--muted);text-align:center;margin-top:8px"></div>`, true);
-  loadMsgs();
-  loadDocs();
+  loadMsgs(); loadDocs();
   if (chatTimer) clearInterval(chatTimer);
   chatTimer = setInterval(() => { loadMsgs(); loadDocs(); }, 3000);
 }
@@ -255,22 +279,16 @@ async function loadMsgs() {
   try {
     const r = await fetch(`/api/solicitud/${chatId}/mensajes?marcar=usuario`);
     const d = await r.json();
-
-    // --- Solo agregar mensajes nuevos (sin repintar → sin parpadeo) ---
     const nuevos = d.mensajes.filter(m => !uRenderedIds.includes(m.id));
     if (nuevos.length) {
       const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
-      nuevos.forEach(m => {
-        box.insertAdjacentHTML("beforeend", uBubble(m));
-        uRenderedIds.push(m.id);
-      });
+      nuevos.forEach(m => { box.insertAdjacentHTML("beforeend", uBubble(m)); uRenderedIds.push(m.id); });
       if (nearBottom) box.scrollTop = box.scrollHeight;
     }
-
-    // --- Refrescar panel de pago si cambió el estado ---
-    if (d.solicitud && d.solicitud.pago_estado !== uPagoEstado) {
-      uPagoEstado = d.solicitud.pago_estado;
-      renderPayPanel(d.solicitud);
+    if (d.solicitud && d.solicitud.fase !== uFase) {
+      uFase = d.solicitud.fase;
+      renderPhaseBar(d.solicitud);
+      renderActionPanel(d.solicitud);
     }
   } catch (e) { }
 }
@@ -280,98 +298,144 @@ function uBubble(m) {
     return `<div class="bubble bb-ask">📎 ${esc(m.texto)}<div class="bb-time">${hhmm(m.created_at)}</div></div>`;
   if (m.tipo === "archivo")
     return `<div class="bubble bb-file">📄 ${esc(m.archivo_nombre)}<div class="bb-time">Enviado ✓ · ${hhmm(m.created_at)}</div></div>`;
-  if (m.tipo === "solicitud_pago")
-    return `<div class="bubble bb-them" style="background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46;white-space:pre-line">💵 ${esc(m.texto)}<div class="bb-time">${hhmm(m.created_at)}</div></div>`;
+  if (m.tipo === "acuerdo")
+    return `<div class="bubble bb-them" style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;white-space:pre-line">🤝 ${esc(m.texto)}<div class="bb-time">${hhmm(m.created_at)}</div></div>`;
+  if (m.tipo === "entrega")
+    return `<div class="bubble bb-them" style="background:#f5f3ff;border:1px solid #ddd6fe;color:#5b21b6">📦 ${esc(m.texto)}${m.archivo_path ? `<a class="dl" href="/uploads/${encodeURIComponent(m.archivo_path)}" target="_blank" download style="color:#7c3aed">⬇ ${esc(m.archivo_nombre)}</a>` : ""}<div class="bb-time">${hhmm(m.created_at)}</div></div>`;
   if (m.tipo === "pago_hecho" || m.tipo === "pago_liberado")
-    return `<div class="bubble bb-me" style="background:#1e3a8a">✅ ${esc(m.texto)}<div class="bb-time">${hhmm(m.created_at)}</div></div>`;
+    return `<div class="bubble bb-me" style="background:#059669">✅ ${esc(m.texto)}<div class="bb-time">${hhmm(m.created_at)}</div></div>`;
   return `<div class="bubble ${m.autor === "usuario" ? "bb-me" : "bb-them"}">${esc(m.texto)}<div class="bb-time">${hhmm(m.created_at)}</div></div>`;
 }
 
-/* ---------- PANEL DE PAGO (usuario) ---------- */
-function renderPayPanel(s) {
-  const el = document.getElementById("payPanel");
+/* ---------- Barra de fases (rastreador visible) ---------- */
+function renderPhaseBar(s) {
+  const el = document.getElementById("phaseBar");
   if (!el) return;
-  const p = s.precio ? Number(s.precio).toFixed(2) : "0.00";
+  const steps = [["cotizacion", "Chat"], ["acuerdo", "Acuerdo"], ["en_curso", "Anticipo"], ["entregado", "Entrega"], ["completado", "Pago"]];
+  const order = ["cotizacion", "acuerdo", "en_curso", "entregado", "completado"];
+  const cur = order.indexOf(s.fase === "anticipo" ? "acuerdo" : s.fase);
+  el.innerHTML = `
+    <div style="background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:14px 12px;margin-bottom:12px">
+      <div style="display:flex;align-items:flex-start;gap:0;font-size:10.5px">
+        ${steps.map(([k, lbl], i) => {
+          const done = i < cur, active = i === cur;
+          const bg = done ? "var(--ok)" : active ? "var(--brand-2)" : "var(--line)";
+          const tc = done || active ? "var(--ink)" : "var(--muted)";
+          return `<div style="display:flex;align-items:center;${i < steps.length - 1 ? "flex:1" : ""}">
+            <div style="display:flex;flex-direction:column;align-items:center;gap:3px">
+              <div style="width:24px;height:24px;border-radius:50%;background:${bg};color:#fff;display:grid;place-items:center;font-weight:700;font-size:11px">${done ? "✓" : i + 1}</div>
+              <span style="color:${tc};font-weight:${active ? 600 : 400};white-space:nowrap">${lbl}</span>
+            </div>
+            ${i < steps.length - 1 ? `<div style="flex:1;height:2px;background:${done ? "var(--ok)" : "var(--line)"};margin:0 4px;margin-bottom:16px"></div>` : ""}
+          </div>`;
+        }).join("")}
+      </div>
+    </div>`;
+}
 
-  if (s.pago_estado === "pendiente") {
+/* ---------- Panel de acción según fase ---------- */
+function renderActionPanel(s) {
+  const el = document.getElementById("actionPanel");
+  if (!el) return;
+  const f = s.fase;
+
+  if (f === "acuerdo") {
+    const total = (s.precio || 0).toFixed(2), ant = (s.anticipo || 0).toFixed(2), saldo = ((s.precio || 0) - (s.anticipo || 0)).toFixed(2);
     el.innerHTML = `
-      <div style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:12px;padding:14px;margin-bottom:12px">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
-          <div><div style="font-weight:700;font-size:14px;color:#065f46">💵 Pago solicitado: $${p}</div>
-            <div style="font-size:12px;color:#047857;margin-top:2px">Tu dinero queda protegido hasta confirmar el trámite</div></div>
-          <button class="btn btn-ok btn-sm" onclick="pagar(${s.id})">Pagar ahora</button>
-        </div>
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:15px;margin-bottom:12px">
+        <div style="font-weight:700;font-size:14px;color:#1e3a8a;margin-bottom:8px">🤝 Acuerdo propuesto</div>
+        <div style="font-size:13px;color:#334155;line-height:1.7">
+          Precio total: <b>$${total}</b><br>
+          Anticipo para iniciar: <b>$${ant}</b><br>
+          Saldo al recibir: <b>$${saldo}</b></div>
+        <button class="btn btn-primary btn-block" style="margin-top:12px" onclick="pagarAnticipo(${s.id}, ${s.anticipo || 0})">
+          Pagar anticipo de $${ant} y comenzar</button>
+        <div style="font-size:11.5px;color:#2563eb;margin-top:8px;text-align:center">🔒 Tu anticipo queda protegido: el asesor no lo recibe hasta entregarte el trámite.</div>
       </div>`;
-  } else if (s.pago_estado === "en_garantia") {
+  } else if (f === "en_curso") {
     el.innerHTML = `
-      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:14px;margin-bottom:12px">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
-          <div><div style="font-weight:700;font-size:14px;color:#1e3a8a">🔒 $${p} en garantía</div>
-            <div style="font-size:12px;color:#2563eb;margin-top:2px">Libera el pago cuando tu trámite esté completo</div></div>
-          <button class="btn btn-primary btn-sm" onclick="liberar(${s.id})">Trámite listo, liberar</button>
-        </div>
+      <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:14px;margin-bottom:12px;text-align:center">
+        <div style="font-weight:700;font-size:13.5px;color:#92400e">⏳ Tu asesor está trabajando en el trámite</div>
+        <div style="font-size:12px;color:#b45309;margin-top:3px">Anticipo de $${(s.pagado_anticipo || 0).toFixed(2)} retenido en garantía</div>
       </div>`;
-  } else if (s.pago_estado === "liberado") {
+  } else if (f === "entregado") {
+    const saldo = ((s.precio || 0) - (s.pagado_anticipo || 0)).toFixed(2);
+    el.innerHTML = `
+      <div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:12px;padding:15px;margin-bottom:12px">
+        <div style="font-weight:700;font-size:14px;color:#5b21b6;margin-bottom:6px">📦 El asesor entregó tu trámite</div>
+        <div style="font-size:12.5px;color:#6d28d9;line-height:1.5">Revisa el comprobante en el chat. Si todo está correcto, confirma para pagar el saldo de <b>$${saldo}</b> y liberar el pago.</div>
+        <button class="btn btn-ok btn-block" style="margin-top:12px" onclick="confirmarEntrega(${s.id})">
+          ✓ Confirmar y liberar pago ($${saldo})</button>
+        <button class="btn btn-ghost btn-block" style="margin-top:8px" onclick="toast('Escríbele por el chat para resolver dudas antes de confirmar.')">
+          Tengo un problema</button>
+      </div>`;
+  } else if (f === "completado") {
     el.innerHTML = `
       <div style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:12px;padding:14px;margin-bottom:12px;text-align:center">
-        <div style="font-weight:700;font-size:14px;color:#065f46">✅ Pago de $${p} completado</div>
-        <div style="font-size:12px;color:#047857;margin-top:2px">¡Gracias! El trámite quedó cerrado.</div>
+        <div style="font-weight:700;font-size:14px;color:#065f46">✅ Trámite completado</div>
+        <div style="font-size:12px;color:#047857;margin-top:2px">Pago liberado. ¡Gracias por usar ContiGO!</div>
       </div>`;
   } else {
     el.innerHTML = "";
   }
 }
 
-async function pagar(sid) {
-  track("abre_pago");
+/* ---------- Pagar anticipo (desde billetera) ---------- */
+async function pagarAnticipo(sid, monto) {
+  // Verifica saldo
+  const w = await (await fetch(`/api/billetera?username=${encodeURIComponent(walletUser())}`)).json();
+  if ((w.saldo || 0) < monto) {
+    return openM(`
+      <h2>Saldo insuficiente</h2>
+      <div class="sub">Necesitas $${monto.toFixed(2)} y tienes $${(w.saldo || 0).toFixed(2)} en tu billetera.</div>
+      <div class="alert alert-info"><span>💡</span><span>Deposita saldo en tu billetera y vuelve a intentarlo.</span></div>
+      <button class="btn btn-primary btn-block btn-lg" style="margin-top:18px" onclick="abrirBilletera(${sid})">Ir a mi billetera</button>
+      <button class="btn btn-ghost btn-block" style="margin-top:8px" onclick="abrirChat(${sid})">Volver al chat</button>`);
+  }
   openM(`
-    <h2>💳 Pagar servicio</h2>
-    <div class="sub">Pago protegido — el dinero solo se libera cuando confirmes que tu trámite está completo.</div>
-    <label style="margin-top:0">Método de pago</label>
-    <select id="payMet">
-      <option>Tarjeta de crédito/débito</option>
-      <option>Transferencia bancaria</option>
-      <option>Billetera móvil (Bimo, De Una)</option>
-    </select>
-    <label>Número de tarjeta</label>
-    <input type="text" placeholder="•••• •••• •••• ••••" maxlength="19" value="4242 4242 4242 4242">
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-      <div><label>Vencimiento</label><input type="text" placeholder="MM/AA" value="09/27"></div>
-      <div><label>CVV</label><input type="text" placeholder="•••" maxlength="4" value="123"></div>
-    </div>
-    <div class="alert alert-info" style="margin-top:16px">
-      <span>🔒</span><span>Demostración — no se procesa ningún cobro real.</span></div>
-    <button class="btn btn-ok btn-block btn-lg" style="margin-top:20px" onclick="confirmarPago(${sid})">Confirmar pago</button>`);
-}
-
-async function confirmarPago(sid) {
-  const metodo = document.getElementById("payMet").value;
-  await fetch(`/api/solicitud/${sid}/pagar`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ metodo, autor_nombre: ME.nombre })
-  });
-  track("pago_realizado");
-  closeM();
-  abrirChat(sid);   // reabre el chat ya con el estado "en garantía"
-  toast("✅ Pago realizado — en garantía");
-}
-
-async function liberar(sid) {
-  openM(`
-    <h2>Confirmar trámite completo</h2>
-    <div class="sub">Al liberar el pago, el dinero se transfiere a tu asesor. Hazlo solo si tu trámite está resuelto a tu satisfacción.</div>
-    <div class="alert alert-info"><span>💡</span><span>Esta acción cierra la solicitud y no se puede deshacer.</span></div>
+    <h2>Confirmar anticipo</h2>
+    <div class="sub">Se descontará $${monto.toFixed(2)} de tu billetera y quedará retenido en garantía hasta que recibas el trámite.</div>
+    <div class="alert alert-info"><span>🔒</span><span>El asesor NO recibe este dinero ahora. Solo se le paga cuando confirmes la entrega.</span></div>
     <div style="display:flex;gap:10px;margin-top:20px">
-      <button class="btn btn-ghost" style="flex:1" onclick="abrirChat(${sid})">Todavía no</button>
-      <button class="btn btn-ok" style="flex:1" onclick="confirmarLiberar(${sid})">Sí, liberar pago</button>
+      <button class="btn btn-ghost" style="flex:1" onclick="abrirChat(${sid})">Cancelar</button>
+      <button class="btn btn-primary" style="flex:1" onclick="doPagarAnticipo(${sid})">Pagar $${monto.toFixed(2)}</button>
     </div>`);
 }
+async function doPagarAnticipo(sid) {
+  const r = await fetch(`/api/solicitud/${sid}/pagar-anticipo`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: walletUser() })
+  });
+  const d = await r.json();
+  if (!d.ok) {
+    if (d.error === "saldo_insuficiente") return pagarAnticipo(sid, d.necesita);
+    return toast(d.error || "No se pudo pagar");
+  }
+  track("anticipo_pagado");
+  toast("✅ Anticipo pagado — trámite iniciado");
+  abrirChat(sid);
+}
 
-async function confirmarLiberar(sid) {
-  await fetch(`/api/solicitud/${sid}/liberar-pago`, { method: "POST" });
-  track("pago_liberado");
+/* ---------- Confirmar entrega (paga saldo + libera) ---------- */
+async function confirmarEntrega(sid) {
+  const r = await fetch(`/api/solicitud/${sid}/confirmar-entrega`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: walletUser() })
+  });
+  const d = await r.json();
+  if (!d.ok) {
+    if (d.error === "saldo_insuficiente") {
+      return openM(`
+        <h2>Saldo insuficiente para el saldo final</h2>
+        <div class="sub">Necesitas $${d.necesita.toFixed(2)} y tienes $${d.saldo.toFixed(2)}.</div>
+        <button class="btn btn-primary btn-block btn-lg" style="margin-top:18px" onclick="abrirBilletera(${sid})">Depositar y volver</button>
+        <button class="btn btn-ghost btn-block" style="margin-top:8px" onclick="abrirChat(${sid})">Volver al chat</button>`);
+    }
+    return toast(d.error || "No se pudo confirmar");
+  }
+  track("entrega_confirmada");
   closeM();
-  toast("🎉 ¡Trámite completado! Gracias por usar ContiGO");
+  toast("🎉 ¡Trámite completado! Pago liberado al asesor");
   checkNotifs();
 }
 
@@ -384,7 +448,6 @@ async function loadDocs() {
     const r = await fetch(`/api/solicitud/${chatId}/documentos`);
     const docs = await r.json();
     if (!docs.length) { el.innerHTML = ""; return; }
-
     const done = docs.filter(d => d.entregado).length;
     el.innerHTML = `
       <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:14px;margin-bottom:12px">
@@ -399,7 +462,7 @@ async function loadDocs() {
               <span style="${d.entregado ? "text-decoration:line-through;opacity:.7" : ""}">${esc(d.nombre)}</span>
             </div>`).join("")}
         </div>
-        ${done < docs.length ? `<div style="font-size:11.5px;color:#b45309;margin-top:8px">Usa "Adjuntar documento" abajo para enviarlos.</div>` : ""}
+        ${done < docs.length ? `<div style="font-size:11.5px;color:#b45309;margin-top:8px">Usa "Adjuntar documento" para enviarlos.</div>` : ""}
       </div>`;
   } catch (e) { }
 }
@@ -431,6 +494,73 @@ async function upFile(inp) {
     if (d.ok) { track("documento_enviado", d.archivo); loadMsgs(); loadDocs(); }
   } catch (e) { st.textContent = "⚠️ Sin conexión"; }
   inp.value = "";
+}
+
+/* ---------- BILLETERA (usuario) ---------- */
+function walletUser() { return ME.username || ME.correo || ME.nombre; }
+
+async function abrirBilletera(volverChat) {
+  track("abre_billetera");
+  const w = await (await fetch(`/api/billetera?username=${encodeURIComponent(walletUser())}`)).json();
+  const movs = w.movimientos || [];
+  openM(`
+    <h2>Mi billetera</h2>
+    <div class="sub">Deposita saldo y úsalo en cualquier trámite</div>
+    <div style="background:linear-gradient(135deg,#1e3a8a,#2563eb);color:#fff;border-radius:14px;padding:22px;margin-bottom:16px">
+      <div style="font-size:12.5px;opacity:.85">Saldo disponible</div>
+      <div style="font-family:'Sora',sans-serif;font-size:34px;font-weight:800" id="uBal">$${Number(w.saldo || 0).toFixed(2)}</div>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:18px">
+      ${[10, 20, 50, 100].map(v => `<button class="btn btn-ghost btn-sm" style="flex:1" onclick="depositar(${v},${volverChat || "null"})">+$${v}</button>`).join("")}
+    </div>
+    <button class="btn btn-primary btn-block" onclick="depositarOtro(${volverChat || "null"})">Depositar otro monto</button>
+    ${volverChat ? `<button class="btn btn-ok btn-block" style="margin-top:9px" onclick="abrirChat(${volverChat})">Volver al trámite</button>` : ""}
+    <label style="margin-top:20px">Movimientos recientes</label>
+    <div style="display:flex;flex-direction:column">
+      ${movs.length ? movs.map(m => uMovRow(m)).join("") : '<p style="font-size:13px;color:var(--muted)">Aún no hay movimientos.</p>'}
+    </div>`, true);
+}
+
+function uMovRow(m) {
+  const pos = m.monto >= 0;
+  const ic = { deposito: "⬇️", retencion: "🔒", pago: "➖", ingreso: "💰", reembolso: "↩️" }[m.tipo] || "•";
+  return `<div style="display:flex;align-items:center;gap:11px;padding:10px 0;border-bottom:1px solid var(--line)">
+    <div style="width:32px;height:32px;border-radius:9px;background:var(--bg);display:grid;place-items:center">${ic}</div>
+    <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500">${esc(m.concepto || m.tipo)}</div>
+      <div style="font-size:11px;color:var(--muted)">${timeAgo(m.created_at)}</div></div>
+    <b style="font-family:'Sora',sans-serif;font-size:14px;color:${pos ? "var(--ok)" : "var(--ink-2)"}">${pos ? "+" : ""}$${Math.abs(m.monto).toFixed(2)}</b>
+  </div>`;
+}
+
+function depositarOtro(volver) {
+  openM(`
+    <h2>Depositar saldo</h2>
+    <div class="sub">Simulado — no se cobra dinero real</div>
+    <label style="margin-top:0">Monto (USD)</label>
+    <input type="number" id="depMonto" min="1" step="0.01" placeholder="Ej: 40" style="font-size:18px;font-weight:700">
+    <label>Método</label>
+    <select id="depMet">
+      <option>Tarjeta de crédito/débito</option>
+      <option>Transferencia bancaria</option>
+      <option>Billetera móvil (Bimo, De Una)</option>
+    </select>
+    <button class="btn btn-primary btn-block btn-lg" style="margin-top:20px" onclick="doDepositarInput(${volver || "null"})">Depositar</button>`);
+}
+async function doDepositarInput(volver) {
+  const monto = parseFloat(document.getElementById("depMonto").value);
+  if (!monto || monto <= 0) return toast("Indica un monto válido");
+  await depositar(monto, volver);
+}
+async function depositar(monto, volver) {
+  const r = await fetch("/api/billetera/depositar", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: walletUser(), monto, metodo: "Tarjeta" })
+  });
+  const d = await r.json();
+  if (!d.ok) return toast(d.error || "No se pudo depositar");
+  track("deposito", "$" + monto);
+  toast(`✅ Depositaste $${monto.toFixed(2)}`);
+  abrirBilletera(volver);
 }
 
 /* ---------- VIDEOS ---------- */
@@ -504,6 +634,15 @@ async function checkNotifs() {
       const el = document.getElementById(id);
       if (el) { el.textContent = n; el.style.display = n ? "" : "none"; }
     });
+  } catch (e) { }
+  refreshSaldo();
+}
+
+async function refreshSaldo() {
+  try {
+    const w = await (await fetch(`/api/billetera?username=${encodeURIComponent(ME.username || ME.correo || ME.nombre)}`)).json();
+    const el = document.getElementById("topSaldo");
+    if (el) el.textContent = "$" + Number(w.saldo || 0).toFixed(2);
   } catch (e) { }
 }
 

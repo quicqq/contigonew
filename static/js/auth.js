@@ -95,18 +95,10 @@ async function doRegister(role) {
 
 // ---------- LOGIN ----------
 function showLogin(role) {
-  const demo = role === "experto" ? ["admin", "admin"] : ["user", "user"];
   openM(`
     <h2>Iniciar sesión</h2>
     <div class="sub">Entra con tu cuenta de ContiGO</div>
-    <div class="alert alert-info" style="margin:0 0 18px">
-      <span>💡</span><span>Cuenta de demostración: <b>${demo[0]} / ${demo[1]}</b></span>
-    </div>
-    <button class="btn btn-ghost btn-block" onclick="doLogin('${demo[0]}','${demo[1]}')">
-      ⚡ Entrar con la cuenta demo
-    </button>
-    <div style="text-align:center;font-size:12px;color:var(--muted);margin:16px 0 4px">— o con tu cuenta —</div>
-    <label>Usuario</label>
+    <label style="margin-top:0">Usuario</label>
     <input type="text" id="lUsr" placeholder="tu usuario" autocomplete="username">
     <label>Contraseña</label>
     <input type="password" id="lPwd" placeholder="tu contraseña" autocomplete="current-password"
