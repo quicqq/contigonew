@@ -10,6 +10,15 @@ const FASE_LABELS = {
   en_curso: "En curso", entregado: "Entregado — esperando confirmación", completado: "Completado"
 };
 
+/* Escribe en el DOM SOLO si el contenido cambio: elimina el parpadeo del polling. */
+function setHTML(el, html) {
+  if (!el) return false;
+  if (el.dataset.sig === html) return false;
+  el.dataset.sig = html;
+  el.innerHTML = html;
+  return true;
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   ME = requireAuth("experto");
   if (!ME) return;
@@ -104,15 +113,15 @@ function renderOpen() {
   const el = document.getElementById("openList");
   if (!el) return;
   if (!OPEN.length) {
-    el.innerHTML = `<div class="empty" style="padding:44px 20px">
+    setHTML(el, `<div class="empty" style="padding:44px 20px">
       <div class="empty-ic"><svg width="26" height="26" fill="none" stroke="#94a3b8" stroke-width="1.7" viewBox="0 0 24 24">
         <circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/></svg></div>
       <b>No hay trámites abiertos</b>
       <p>Cuando alguien pida ayuda sin elegir a un profesional, aparecerá aquí para que lo tomes.</p>
-    </div>`;
+    </div>`);
     return;
   }
-  el.innerHTML = OPEN.map(s => {
+  const html = OPEN.map(s => {
     const urg = s.urgencia === "urgente" ? '<span class="badge b-new">Urgente</span>' :
                 s.urgencia === "pronto" ? '<span class="badge b-work">Pronto</span>' : '<span class="badge b-info">Normal</span>';
     return `<div class="card" style="padding:18px;display:flex;gap:16px;align-items:center">
@@ -131,6 +140,7 @@ function renderOpen() {
       </button>
     </div>`;
   }).join("");
+  setHTML(el, html);
 }
 
 async function tomar(sid) {
@@ -198,15 +208,15 @@ function renderList() {
   const el = document.getElementById("solList");
   const list = FILT === "todas" ? SOLS : SOLS.filter(s => s.estado === FILT);
   if (!list.length) {
-    el.innerHTML = `<div class="empty" style="padding:36px 18px">
+    setHTML(el, `<div class="empty" style="padding:36px 18px">
       <div class="empty-ic"><svg width="24" height="24" fill="none" stroke="#94a3b8" stroke-width="1.8" viewBox="0 0 24 24">
         <path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.4 5.1L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.4-6.9A2 2 0 0 0 16.8 4H7.2a2 2 0 0 0-1.8 1.1z"/></svg></div>
       <b>${FILT === "todas" ? "Esperando solicitudes" : "Nada por aquí"}</b>
       <p style="font-size:12.5px">${FILT === "todas" ? "Aparecerán automáticamente." : "Cambia el filtro."}</p>
-    </div>`;
+    </div>`);
     return;
   }
-  el.innerHTML = list.map(s => {
+  const html = list.map(s => {
     const urg = s.urgencia === "urgente" ? '<span class="badge b-new" style="font-size:10px;padding:2px 7px">Urgente</span>' : "";
     return `<div class="sol ${s.estado} ${ACT === s.id ? "on" : ""}" onclick="openThread(${s.id})">
       <div class="sol-hd">
@@ -226,6 +236,7 @@ function renderList() {
       </div>
     </div>`;
   }).join("");
+  setHTML(el, html);
 }
 
 /* ---------- HILO / CHAT (incremental, sin parpadeo) ---------- */
@@ -308,23 +319,47 @@ function buildThreadShell(s) {
 }
 
 /* ---------- Panel de documentos del experto (revisar/aprobar/rechazar) ---------- */
+let expDocsMin = false;
+function toggleExpDocs() {
+  expDocsMin = !expDocsMin;
+  const el = document.getElementById("expDocPanel");
+  if (el) el.dataset.sig = "";
+  loadExpDocs();
+}
+
 async function loadExpDocs() {
   if (!ACT) return;
   const el = document.getElementById("expDocPanel");
   if (!el) return;
   try {
     const docs = await (await fetch(`/api/solicitud/${ACT}/documentos`)).json();
-    if (!docs.length) { el.innerHTML = ""; return; }
+    if (!docs.length) { setHTML(el, ""); return; }
     const aprob = docs.filter(d => d.estado === "aprobado").length;
-    el.innerHTML = `
-      <div style="background:var(--bg);border:1px solid var(--line);border-radius:11px;padding:12px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <b style="font-size:12.5px">📋 Documentos (${aprob}/${docs.length} aprobados)</b>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:7px">
-          ${docs.map(d => expDocRow(d)).join("")}
-        </div>
-      </div>`;
+    const porRev = docs.filter(d => d.estado === "enviado").length;
+    const btn = `<button onclick="toggleExpDocs()" title="${expDocsMin ? "Mostrar" : "Minimizar"}"
+        style="background:var(--card);border:1px solid var(--line);color:var(--muted);width:23px;height:23px;
+        border-radius:6px;font-size:12px;line-height:1;flex-shrink:0;cursor:pointer">${expDocsMin ? "▸" : "▾"}</button>`;
+
+    let html;
+    if (expDocsMin) {
+      html = `<div style="background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:8px 11px;
+          display:flex;align-items:center;gap:8px">
+        <span style="font-size:12px;font-weight:600;flex:1">📋 Documentos ${aprob}/${docs.length}${porRev ? ` · ${porRev} por revisar` : ""}</span>
+        ${btn}</div>`;
+    } else {
+      html = `
+        <div style="background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:11px">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
+            <b style="font-size:12.5px;flex:1">📋 Documentos (${aprob}/${docs.length} aprobados)</b>
+            ${porRev ? `<span class="badge b-work" style="font-size:10px;padding:2px 7px">${porRev} por revisar</span>` : ""}
+            ${btn}
+          </div>
+          <div style="display:flex;flex-direction:column;gap:5px;max-height:170px;overflow-y:auto">
+            ${docs.map(d => expDocRow(d)).join("")}
+          </div>
+        </div>`;
+    }
+    setHTML(el, html);
   } catch (e) { }
 }
 
@@ -398,11 +433,11 @@ async function expUpFile(inp) {
 
 function refreshThreadHead(s) {
   const f = document.getElementById("thFase");
-  if (f) f.innerHTML = faseChip(s.fase, false);
+  if (f) setHTML(f, faseChip(s.fase, false));
   const b = document.getElementById("faseBtns");
-  if (b) b.innerHTML = faseActions(s);
+  if (b) setHTML(b, faseActions(s));
   const pt = document.getElementById("phaseTracker");
-  if (pt) pt.innerHTML = phaseTrackerHTML(s.fase);
+  if (pt) setHTML(pt, phaseTrackerHTML(s.fase));
   loadExpDocs();
 }
 

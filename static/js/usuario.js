@@ -314,11 +314,11 @@ async function loadMsgs() {
       const tt = document.getElementById("uThTipo"), tp = document.getElementById("uThProf");
       if (tt) tt.textContent = d.solicitud.tipo;
       if (tp) tp.textContent = "👤 " + (d.solicitud.profesional_solicitado || "Asesor asignado");
-      if (d.solicitud.fase !== uFase) {
-        uFase = d.solicitud.fase;
-        renderPhaseBar(d.solicitud);
-        renderActionPanel(d.solicitud);
-      }
+      // Se repinta SIEMPRE segun el estado real del servidor (con guarda anti-parpadeo
+      // dentro de cada render), asi el panel desaparece apenas cambia la fase.
+      uFase = d.solicitud.fase;
+      renderPhaseBar(d.solicitud);
+      renderActionPanel(d.solicitud);
     }
   } catch (e) { }
 }
@@ -347,14 +347,24 @@ function uBubble(m) {
 }
 
 /* ---------- Barra de fases (rastreador visible) ---------- */
+/* Escribe en el DOM SOLO si el contenido cambio.
+   Esto es lo que elimina el parpadeo del polling cada 3s. */
+function setHTML(el, html) {
+  if (!el) return false;
+  if (el.dataset.sig === html) return false;   // identico: no tocar el DOM
+  el.dataset.sig = html;
+  el.innerHTML = html;
+  return true;
+}
+
 function renderPhaseBar(s) {
   const el = document.getElementById("phaseBar");
   if (!el) return;
   const steps = [["cotizacion", "Chat"], ["acuerdo", "Acuerdo"], ["en_curso", "Anticipo"], ["entregado", "Entrega"], ["completado", "Pago"]];
   const order = ["cotizacion", "acuerdo", "en_curso", "entregado", "completado"];
   const cur = order.indexOf(s.fase === "anticipo" ? "acuerdo" : s.fase);
-  el.innerHTML = `
-    <div style="background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:14px 12px;margin-bottom:12px">
+  const html = `
+    <div style="background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px 12px;margin-bottom:10px">
       <div style="display:flex;align-items:flex-start;gap:0;font-size:10.5px">
         ${steps.map(([k, lbl], i) => {
           const done = i < cur, active = i === cur;
@@ -370,53 +380,76 @@ function renderPhaseBar(s) {
         }).join("")}
       </div>
     </div>`;
+  setHTML(el, html);
 }
 
-/* ---------- Panel de acción según fase ---------- */
+/* ---------- Panel de acción según fase ----------
+   Compacto y minimizable: no ocupa toda la pantalla del chat.  */
+let panelMin = {};   // { fase: true } si el usuario lo minimizó
+
+function togglePanel(fase) {
+  panelMin[fase] = !panelMin[fase];
+  const el = document.getElementById("actionPanel");
+  if (el) el.dataset.sig = "";      // fuerza el repintado
+  if (uLastSol) renderActionPanel(uLastSol);
+}
+
+let uLastSol = null;
+
+function panelWrap(fase, color, borde, titulo, cuerpo, minTexto) {
+  const min = !!panelMin[fase];
+  const btn = `<button onclick="togglePanel('${fase}')" title="${min ? "Mostrar" : "Minimizar"}"
+      style="background:rgba(255,255,255,.6);border:1px solid ${borde};color:inherit;width:24px;height:24px;
+      border-radius:7px;font-size:13px;line-height:1;flex-shrink:0;cursor:pointer">${min ? "▸" : "▾"}</button>`;
+  if (min) {
+    return `<div style="background:${color};border:1px solid ${borde};border-radius:11px;padding:9px 12px;margin-bottom:9px;
+        display:flex;align-items:center;gap:9px">
+      <span style="font-size:12.5px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${minTexto}</span>
+      ${btn}</div>`;
+  }
+  return `<div style="background:${color};border:1px solid ${borde};border-radius:11px;padding:13px;margin-bottom:9px">
+    <div style="display:flex;align-items:flex-start;gap:9px;margin-bottom:7px">
+      <div style="font-weight:700;font-size:13.5px;flex:1">${titulo}</div>${btn}
+    </div>
+    ${cuerpo}</div>`;
+}
+
 function renderActionPanel(s) {
   const el = document.getElementById("actionPanel");
   if (!el) return;
+  uLastSol = s;
   const f = s.fase;
+  let html = "";
 
   if (f === "acuerdo") {
     const total = (s.precio || 0).toFixed(2), ant = (s.anticipo || 0).toFixed(2), saldo = ((s.precio || 0) - (s.anticipo || 0)).toFixed(2);
-    el.innerHTML = `
-      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:15px;margin-bottom:12px">
-        <div style="font-weight:700;font-size:14px;color:#1e3a8a;margin-bottom:8px">🤝 Acuerdo propuesto</div>
-        <div style="font-size:13px;color:#334155;line-height:1.7">
-          Precio total: <b>$${total}</b><br>
-          Anticipo para iniciar: <b>$${ant}</b><br>
-          Saldo al recibir: <b>$${saldo}</b></div>
-        <button class="btn btn-primary btn-block" style="margin-top:12px" onclick="pagarAnticipo(${s.id}, ${s.anticipo || 0})">
-          Pagar anticipo de $${ant} y comenzar</button>
-        <div style="font-size:11.5px;color:#2563eb;margin-top:8px;text-align:center">🔒 Tu anticipo queda protegido: el asesor no lo recibe hasta entregarte el trámite.</div>
-      </div>`;
+    html = panelWrap("acuerdo", "#eff6ff", "#bfdbfe",
+      '<span style="color:#1e3a8a">🤝 Acuerdo propuesto</span>',
+      `<div style="font-size:12.5px;color:#334155;line-height:1.6">
+         Total <b>$${total}</b> · Anticipo <b>$${ant}</b> · Saldo al recibir <b>$${saldo}</b></div>
+       <button class="btn btn-primary btn-block btn-sm" style="margin-top:9px" onclick="pagarAnticipo(${s.id}, ${s.anticipo || 0})">
+         Pagar anticipo de $${ant} y comenzar</button>
+       <div style="font-size:11px;color:#2563eb;margin-top:6px;text-align:center">🔒 Protegido: el asesor no lo recibe hasta entregar.</div>`,
+      `🤝 Acuerdo: pagar anticipo $${ant}`);
   } else if (f === "en_curso") {
-    el.innerHTML = `
-      <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:14px;margin-bottom:12px;text-align:center">
-        <div style="font-weight:700;font-size:13.5px;color:#92400e">⏳ Tu asesor está trabajando en el trámite</div>
-        <div style="font-size:12px;color:#b45309;margin-top:3px">Anticipo de $${(s.pagado_anticipo || 0).toFixed(2)} retenido en garantía</div>
-      </div>`;
+    html = panelWrap("en_curso", "#fffbeb", "#fde68a",
+      '<span style="color:#92400e">⏳ Trámite en curso</span>',
+      `<div style="font-size:12px;color:#b45309">Anticipo de $${(s.pagado_anticipo || 0).toFixed(2)} retenido en garantía. Tu asesor está trabajando.</div>`,
+      `⏳ En curso · $${(s.pagado_anticipo || 0).toFixed(2)} en garantía`);
   } else if (f === "entregado") {
     const saldo = ((s.precio || 0) - (s.pagado_anticipo || 0)).toFixed(2);
-    el.innerHTML = `
-      <div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:12px;padding:15px;margin-bottom:12px">
-        <div style="font-weight:700;font-size:14px;color:#5b21b6;margin-bottom:6px">📦 El asesor entregó tu trámite</div>
-        <div style="font-size:12.5px;color:#6d28d9;line-height:1.5">Revisa el comprobante en el chat. Si todo está correcto, confirma para pagar el saldo de <b>$${saldo}</b> y liberar el pago.</div>
-        <button class="btn btn-ok btn-block" style="margin-top:12px" onclick="confirmarEntrega(${s.id})">
-          ✓ Confirmar y liberar pago ($${saldo})</button>
-        <button class="btn btn-ghost btn-block" style="margin-top:8px" onclick="toast('Escríbele por el chat para resolver dudas antes de confirmar.')">
-          Tengo un problema</button>
-      </div>`;
+    html = panelWrap("entregado", "#f5f3ff", "#ddd6fe",
+      '<span style="color:#5b21b6">📦 Tu trámite fue entregado</span>',
+      `<div style="font-size:12.5px;color:#6d28d9;line-height:1.5">Revisa el comprobante en el chat. Si está correcto, confirma para pagar el saldo de <b>$${saldo}</b>.</div>
+       <button class="btn btn-ok btn-block btn-sm" style="margin-top:9px" onclick="confirmarEntrega(${s.id})">
+         ✓ Confirmar y liberar pago ($${saldo})</button>
+       <button class="btn btn-ghost btn-block btn-sm" style="margin-top:6px" onclick="toast('Escríbele por el chat para resolver dudas antes de confirmar.')">Tengo un problema</button>`,
+      `📦 Entregado · confirmar y pagar $${saldo}`);
   } else if (f === "completado") {
-    el.innerHTML = `
-      <div style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:12px;padding:14px;margin-bottom:12px;text-align:center">
-        <div style="font-weight:700;font-size:14px;color:#065f46">✅ Trámite completado</div>
-        <div style="font-size:12px;color:#047857;margin-top:2px">Pago liberado. ¡Gracias por usar ContiGO!</div>
-      </div>`;
-  } else {
-    el.innerHTML = "";
+    html = `<div style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:11px;padding:10px 13px;margin-bottom:9px;text-align:center">
+      <span style="font-weight:700;font-size:13px;color:#065f46">✅ Trámite completado — pago liberado</span></div>`;
   }
+  setHTML(el, html);
 }
 
 /* ---------- Pagar anticipo (desde billetera) ---------- */
@@ -453,7 +486,17 @@ async function doPagarAnticipo(sid) {
   track("anticipo_pagado");
   closeM();
   toast("✅ Anticipo pagado — trámite iniciado");
-  uFase = null; loadMsgs(); refreshSaldo();
+  forzarRefresco();
+}
+
+/* Limpia las firmas para que los paneles se repinten YA, sin esperar el polling */
+function forzarRefresco() {
+  uFase = null;
+  ["actionPanel", "docPanel", "phaseBar"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.dataset.sig = "";
+  });
+  loadMsgs(); loadDocs(); refreshSaldo();
 }
 
 /* ---------- Confirmar entrega (paga saldo + libera) ---------- */
@@ -476,10 +519,18 @@ async function confirmarEntrega(sid) {
   track("entrega_confirmada");
   closeM();
   toast("🎉 ¡Trámite completado! Pago liberado al asesor");
-  uFase = null; loadMsgs(); loadInbox(); refreshSaldo();
+  forzarRefresco(); loadInbox();
 }
 
 /* ---------- DOCUMENTOS: cada uno con su botón "Enviar" ---------- */
+let docsMin = false;
+function toggleDocs() {
+  docsMin = !docsMin;
+  const el = document.getElementById("docPanel");
+  if (el) el.dataset.sig = "";
+  loadDocs();
+}
+
 async function loadDocs() {
   if (!chatId) return;
   const el = document.getElementById("docPanel");
@@ -487,19 +538,42 @@ async function loadDocs() {
   try {
     const r = await fetch(`/api/solicitud/${chatId}/documentos`);
     const docs = await r.json();
-    if (!docs.length) { el.innerHTML = ""; return; }
+    if (!docs.length) { setHTML(el, ""); return; }
     const aprob = docs.filter(d => d.estado === "aprobado").length;
-    el.innerHTML = `
-      <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:14px;margin-bottom:12px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-          <div style="font-weight:700;font-size:13.5px;color:#92400e">📋 Documentos solicitados</div>
-          <span style="font-size:12px;color:#b45309;font-weight:600">${aprob}/${docs.length} aprobados</span>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:9px">
-          ${docs.map(d => uDocRow(d)).join("")}
-        </div>
-        <input type="file" id="docFileInput" style="display:none" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.webp,.heic" onchange="enviarDocFile(this)">
-      </div>`;
+    const pend = docs.filter(d => d.estado === "pendiente" || d.estado === "rechazado").length;
+    const btn = `<button onclick="toggleDocs()" title="${docsMin ? "Mostrar" : "Minimizar"}"
+        style="background:rgba(255,255,255,.6);border:1px solid #fde68a;color:#92400e;width:24px;height:24px;
+        border-radius:7px;font-size:13px;line-height:1;flex-shrink:0;cursor:pointer">${docsMin ? "▸" : "▾"}</button>`;
+
+    let html;
+    if (docsMin) {
+      html = `<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:11px;padding:9px 12px;margin-bottom:9px;
+          display:flex;align-items:center;gap:9px">
+        <span style="font-size:12.5px;font-weight:600;color:#92400e;flex:1">📋 Documentos ${aprob}/${docs.length}${pend ? ` · ${pend} por enviar` : ""}</span>
+        ${btn}</div>`;
+    } else {
+      html = `
+        <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:11px;padding:12px;margin-bottom:9px">
+          <div style="display:flex;align-items:center;gap:9px;margin-bottom:9px">
+            <div style="font-weight:700;font-size:13px;color:#92400e;flex:1">📋 Documentos solicitados</div>
+            <span style="font-size:11.5px;color:#b45309;font-weight:600">${aprob}/${docs.length}</span>
+            ${btn}
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px;max-height:190px;overflow-y:auto">
+            ${docs.map(d => uDocRow(d)).join("")}
+          </div>
+        </div>`;
+    }
+    if (setHTML(el, html)) {
+      // Reinserta el input de archivo (se pierde al reescribir el HTML)
+      if (!document.getElementById("docFileInput")) {
+        const inp = document.createElement("input");
+        inp.type = "file"; inp.id = "docFileInput"; inp.style.display = "none";
+        inp.accept = ".pdf,.jpg,.jpeg,.png,.doc,.docx,.webp,.heic";
+        inp.onchange = function () { enviarDocFile(this); };
+        el.appendChild(inp);
+      }
+    }
   } catch (e) { }
 }
 
@@ -603,7 +677,7 @@ async function abrirBilletera(volverChat) {
       ${[10, 20, 50, 100].map(v => `<button class="btn btn-ghost btn-sm" style="flex:1" onclick="depositar(${v},${volverChat || "null"})">+$${v}</button>`).join("")}
     </div>
     <button class="btn btn-primary btn-block" onclick="depositarOtro(${volverChat || "null"})">Depositar otro monto</button>
-    ${volverChat ? `<button class="btn btn-ok btn-block" style="margin-top:9px" onclick="abrirChat(${volverChat})">Volver al trámite</button>` : ""}
+    ${volverChat ? `<button class="btn btn-ok btn-block" style="margin-top:9px" onclick="closeM();forzarRefresco()">Volver al trámite</button>` : ""}
     <label style="margin-top:20px">Movimientos recientes</label>
     <div style="display:flex;flex-direction:column">
       ${movs.length ? movs.map(m => uMovRow(m)).join("") : '<p style="font-size:13px;color:var(--muted)">Aún no hay movimientos.</p>'}

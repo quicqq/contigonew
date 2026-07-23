@@ -53,7 +53,11 @@ function initials(name) {
 }
 function timeAgo(iso) {
   const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (s < 60) return "hace " + Math.max(s, 1) + "s";
+  // Se redondea a tramos estables: si el texto cambiara cada segundo,
+  // el HTML nunca seria identico y los paneles se repintarian sin parar
+  // (eso causaba el parpadeo del chat cada 3s).
+  if (s < 45) return "recién";
+  if (s < 90) return "hace 1 min";
   if (s < 3600) return "hace " + Math.floor(s / 60) + " min";
   if (s < 86400) return "hace " + Math.floor(s / 3600) + " h";
   return new Date(iso).toLocaleDateString("es-EC", { day: "numeric", month: "short" });
