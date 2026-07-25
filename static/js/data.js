@@ -15,6 +15,24 @@
 ------------------------------------------------------------ */
 const PROFESIONALES = [
   {
+    id: "mateo",
+    nombre: "Mateo Andrade",
+    titulo: "Asesor Work and Travel · Visa J-1",
+    foto: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&h=200&fit=crop&crop=faces",
+    ciudad: "Guayaquil, Ecuador",
+    rating: "4.9", resenas: 87, casos: 210, anios: 5,
+    desde: 30,
+    respuesta: "~20 min",
+    bio: "Ex participante de Work and Travel y hoy reclutador. Te acompaño en todo el proceso: elección del sponsor, aplicación al programa, preparación para la entrevista de visa J-1 en la embajada y qué esperar al llegar a Estados Unidos.",
+    tags: ["Work and Travel", "Visa J-1", "Entrevista embajada", "DS-2019", "Sponsors"],
+    servicios: [
+      { n: "Asesoría completa Work and Travel", p: 60, t: "1-2 semanas" },
+      { n: "Preparación entrevista visa J-1", p: 30, t: "2-3 días" },
+      { n: "Revisión de documentos DS-2019", p: 25, t: "1 día" },
+      { n: "Simulacro de entrevista consular", p: 20, t: "1 día" },
+    ],
+  },
+  {
     id: "maria",
     nombre: "María Fernanda López",
     titulo: "Abogada · Derecho Civil y Notarial",
@@ -109,6 +127,14 @@ const PROFESIONALES = [
 ------------------------------------------------------------ */
 const VIDEOS = [
   {
+    id: "wat",
+    titulo: "Cómo prepararte para la entrevista de visa J-1 (Work and Travel)",
+    entidad: "Work and Travel", dur: "8:20",
+    yt: "",   // ← pon aquí el VIDEO_ID de YouTube
+    thumb: "https://images.unsplash.com/photo-1552664730-d307ca884978?w=500&h=310&fit=crop",
+    desc: "Qué preguntan en la embajada, qué documentos llevar y cómo responder con confianza para tu programa Work and Travel.",
+  },
+  {
     id: "ruc",
     titulo: "Cómo obtener tu RUC por primera vez",
     entidad: "SRI", dur: "4:35",
@@ -146,6 +172,7 @@ const VIDEOS = [
    TIPOS DE TRÁMITE del formulario de solicitud
 ------------------------------------------------------------ */
 const TIPOS_TRAMITE = [
+  "Work and Travel / Visa J-1",
   "RUC / Impuestos (SRI)",
   "Licencia de conducción",
   "Matriculación vehicular",

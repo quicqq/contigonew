@@ -201,6 +201,15 @@ async function misSolicitudes() {
   uInboxTimer = setInterval(loadInbox, 3500);
 }
 
+function toggleMenu() {
+  const m = document.getElementById("mobileMenu");
+  if (m) m.classList.toggle("open");
+}
+function closeMenu() {
+  const m = document.getElementById("mobileMenu");
+  if (m) m.classList.remove("open");
+}
+
 function cerrarBandeja() {
   document.getElementById("inboxView").style.display = "none";
   document.getElementById("mainView").style.display = "";
@@ -221,15 +230,15 @@ function renderInboxList() {
   const el = document.getElementById("uSolList");
   if (!el) return;
   if (!uSols.length) {
-    el.innerHTML = `<div class="empty" style="padding:36px 18px">
+    setHTML(el, `<div class="empty" style="padding:36px 18px">
       <div class="empty-ic"><svg width="24" height="24" fill="none" stroke="#94a3b8" stroke-width="1.8" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></div>
       <b>Aún no tienes trámites</b>
       <p style="font-size:12.5px">Solicita un servicio para empezar.</p>
       <button class="btn btn-primary btn-sm" style="margin-top:14px" onclick="cerrarBandeja();solicitar()">Solicitar asesoría</button>
-    </div>`;
+    </div>`);
     return;
   }
-  el.innerHTML = uSols.map(s => {
+  const html = uSols.map(s => {
     const est = s.estado === "nueva" ? "nueva" : s.estado === "completada" ? "completada" : "atendiendo";
     return `<div class="sol ${est} ${chatId === s.id ? "on" : ""}" onclick="abrirChat(${s.id})">
       <div class="sol-hd">
@@ -244,6 +253,7 @@ function renderInboxList() {
       <div class="sol-meta"><span>👤 ${esc((s.profesional_solicitado || "Asesor").split("·")[0])}</span></div>
     </div>`;
   }).join("");
+  setHTML(el, html);
 }
 
 
@@ -280,6 +290,7 @@ function abrirChat(sid) {
         <svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21.4 11.05l-9.2 9.2a5 5 0 0 1-7.1-7.1l9.2-9.2a3.3 3.3 0 0 1 4.7 4.7l-9.2 9.2a1.7 1.7 0 0 1-2.3-2.3l8.5-8.5"/></svg>
       </button>
       <input type="file" id="cfile" style="display:none" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.webp,.heic" onchange="upFile(this)">
+      <input type="file" id="docFileInput" style="display:none" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.webp,.heic" onchange="enviarDocFile(this)">
       <textarea id="cin" rows="1" placeholder="Escribe tu mensaje…"
         onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg()}"></textarea>
       <button class="btn btn-primary" onclick="sendMsg()" style="padding:11px 16px">
@@ -564,16 +575,7 @@ async function loadDocs() {
           </div>
         </div>`;
     }
-    if (setHTML(el, html)) {
-      // Reinserta el input de archivo (se pierde al reescribir el HTML)
-      if (!document.getElementById("docFileInput")) {
-        const inp = document.createElement("input");
-        inp.type = "file"; inp.id = "docFileInput"; inp.style.display = "none";
-        inp.accept = ".pdf,.jpg,.jpeg,.png,.doc,.docx,.webp,.heic";
-        inp.onchange = function () { enviarDocFile(this); };
-        el.appendChild(inp);
-      }
-    }
+    setHTML(el, html);
   } catch (e) { }
 }
 
@@ -674,7 +676,7 @@ async function abrirBilletera(volverChat) {
       <div style="font-family:'Sora',sans-serif;font-size:34px;font-weight:800" id="uBal">$${Number(w.saldo || 0).toFixed(2)}</div>
     </div>
     <div style="display:flex;gap:8px;margin-bottom:18px">
-      ${[10, 20, 50, 100].map(v => `<button class="btn btn-ghost btn-sm" style="flex:1" onclick="depositar(${v},${volverChat || "null"})">+$${v}</button>`).join("")}
+      ${[10, 20, 50, 100].map(v => `<button class="btn btn-ghost btn-sm" style="flex:1" onclick="elegirMetodo(${v},${volverChat || "null"})">+$${v}</button>`).join("")}
     </div>
     <button class="btn btn-primary btn-block" onclick="depositarOtro(${volverChat || "null"})">Depositar otro monto</button>
     ${volverChat ? `<button class="btn btn-ok btn-block" style="margin-top:9px" onclick="closeM();forzarRefresco()">Volver al trámite</button>` : ""}
@@ -698,32 +700,86 @@ function uMovRow(m) {
 function depositarOtro(volver) {
   openM(`
     <h2>Depositar saldo</h2>
-    <div class="sub">Simulado — no se cobra dinero real</div>
+    <div class="sub">Elige cuánto quieres cargar a tu billetera</div>
     <label style="margin-top:0">Monto (USD)</label>
-    <input type="number" id="depMonto" min="1" step="0.01" placeholder="Ej: 40" style="font-size:18px;font-weight:700">
-    <label>Método</label>
-    <select id="depMet">
-      <option>Tarjeta de crédito/débito</option>
-      <option>Transferencia bancaria</option>
-      <option>Billetera móvil (Bimo, De Una)</option>
-    </select>
-    <button class="btn btn-primary btn-block btn-lg" style="margin-top:20px" onclick="doDepositarInput(${volver || "null"})">Depositar</button>`);
+    <input type="number" id="depMonto" min="1" step="0.01" placeholder="Ej: 40" style="font-size:18px;font-weight:700"
+           onkeydown="if(event.key==='Enter')irAMetodo(${volver || "null"})">
+    <div style="display:flex;gap:10px;margin-top:22px">
+      <button class="btn btn-ghost" style="flex:1" onclick="abrirBilletera(${volver || "null"})">Cancelar</button>
+      <button class="btn btn-primary" style="flex:1" onclick="irAMetodo(${volver || "null"})">Continuar</button>
+    </div>`);
 }
-async function doDepositarInput(volver) {
+function irAMetodo(volver) {
   const monto = parseFloat(document.getElementById("depMonto").value);
   if (!monto || monto <= 0) return toast("Indica un monto válido");
-  await depositar(monto, volver);
+  elegirMetodo(monto, volver);
 }
-async function depositar(monto, volver) {
+
+/* Paso 2: elegir método de pago */
+let depSel = { monto: 0, volver: null, metodo: "Tarjeta de crédito/débito" };
+function elegirMetodo(monto, volver) {
+  depSel = { monto, volver: volver || null, metodo: "Tarjeta de crédito/débito" };
+  const metodos = [
+    ["Tarjeta de crédito/débito", "💳"],
+    ["Transferencia bancaria", "🏦"],
+    ["Billetera móvil (Bimo, DeUna)", "📱"],
+  ];
+  openM(`
+    <h2>¿Cómo quieres pagar?</h2>
+    <div class="sub">Depósito de <b>$${monto.toFixed(2)}</b> a tu billetera</div>
+    <div style="display:flex;flex-direction:column;gap:10px;margin-top:8px">
+      ${metodos.map((m, i) => `
+        <button class="dep-metodo${i === 0 ? " sel" : ""}" data-metodo="${esc(m[0])}" onclick="pickMetodo(this)"
+          style="display:flex;align-items:center;gap:12px;padding:14px;border:2px solid ${i === 0 ? "var(--brand-2)" : "var(--line)"};
+          border-radius:12px;background:${i === 0 ? "var(--brand-light)" : "var(--card)"};text-align:left;width:100%">
+          <span style="font-size:22px">${m[1]}</span>
+          <span style="font-weight:600;font-size:14px;flex:1">${m[0]}</span>
+          <span class="dep-check" style="color:var(--brand-2);font-weight:800;font-size:16px;${i === 0 ? "" : "visibility:hidden"}">✓</span>
+        </button>`).join("")}
+    </div>
+    <div style="display:flex;gap:10px;margin-top:22px">
+      <button class="btn btn-ghost" style="flex:1" onclick="abrirBilletera(${volver || "null"})">Cancelar</button>
+      <button class="btn btn-primary" style="flex:1" onclick="confirmarDeposito()">Continuar</button>
+    </div>`);
+}
+function pickMetodo(btn) {
+  depSel.metodo = btn.dataset.metodo;
+  document.querySelectorAll(".dep-metodo").forEach(b => {
+    const on = b === btn;
+    b.style.borderColor = on ? "var(--brand-2)" : "var(--line)";
+    b.style.background = on ? "var(--brand-light)" : "var(--card)";
+    b.querySelector(".dep-check").style.visibility = on ? "visible" : "hidden";
+  });
+}
+
+/* Paso 3: confirmar */
+function confirmarDeposito() {
+  openM(`
+    <h2>Confirmar depósito</h2>
+    <div class="sub">Revisa antes de confirmar</div>
+    <div style="background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:16px;margin:6px 0 4px">
+      <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:14px">
+        <span style="color:var(--muted)">Monto</span><b>$${depSel.monto.toFixed(2)}</b></div>
+      <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:14px;border-top:1px solid var(--line)">
+        <span style="color:var(--muted)">Método</span><b style="text-align:right">${esc(depSel.metodo)}</b></div>
+    </div>
+    <div class="alert alert-info" style="margin-top:12px"><span>ℹ️</span><span>Depósito simulado: no se cobra dinero real. Es para probar el prototipo.</span></div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-ghost" style="flex:1" onclick="elegirMetodo(${depSel.monto},${depSel.volver || "null"})">Atrás</button>
+      <button class="btn btn-primary" style="flex:1" onclick="doDeposito()">Confirmar depósito</button>
+    </div>`);
+}
+async function doDeposito() {
   const r = await fetch("/api/billetera/depositar", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username: walletUser(), monto, metodo: "Tarjeta" })
+    body: JSON.stringify({ username: walletUser(), monto: depSel.monto, metodo: depSel.metodo })
   });
   const d = await r.json();
   if (!d.ok) return toast(d.error || "No se pudo depositar");
-  track("deposito", "$" + monto);
-  toast(`✅ Depositaste $${monto.toFixed(2)}`);
-  abrirBilletera(volver);
+  track("deposito", "$" + depSel.monto);
+  toast(`✅ Depositaste $${depSel.monto.toFixed(2)}`);
+  refreshSaldo();
+  abrirBilletera(depSel.volver);
 }
 
 /* ---------- VIDEOS ---------- */
@@ -812,7 +868,7 @@ async function refreshSaldo() {
 /* ---------- EXTRAS ---------- */
 function renderTop() {
   document.getElementById("topTramites").innerHTML = [
-    ["RUC / SRI", 42], ["Licencia", 35], ["Visa", 28], ["Notarial", 21]
+    ["Work and Travel", 48], ["RUC / SRI", 42], ["Licencia", 35], ["Visa", 28]
   ].map(([n, v]) => `
     <div><div style="display:flex;justify-content:space-between;margin-bottom:4px">
       <span>${n}</span><b style="color:var(--brand-2)">${v}%</b></div>
