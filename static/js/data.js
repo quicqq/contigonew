@@ -137,8 +137,8 @@ const VIDEOS = [
   {
     id: "ruc",
     titulo: "Cómo obtener tu RUC por primera vez",
-    entidad: "SRI", dur: "4:35",
-    yt: "",   // ← pon aquí el VIDEO_ID de YouTube
+    entidad: "SRI", dur: "8:32",
+    yt: "FwEmTw9lac0",   // ← pon aquí el VIDEO_ID de YouTube
     thumb: "https://images.unsplash.com/photo-1554224155-6726b3ff858f?w=500&h=310&fit=crop",
     desc: "Requisitos, formulario y pasos en la web del SRI para sacar tu RUC sin ir a ventanilla.",
   },
