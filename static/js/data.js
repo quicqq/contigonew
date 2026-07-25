@@ -129,8 +129,8 @@ const VIDEOS = [
   {
     id: "wat",
     titulo: "Cómo prepararte para la entrevista de visa J-1 (Work and Travel)",
-    entidad: "Work and Travel", dur: "8:20",
-    yt: "",   // ← pon aquí el VIDEO_ID de YouTube
+    entidad: "Work and Travel", dur: "5:48",
+    yt: "mOIsyj0p9kY",   // ← pon aquí el VIDEO_ID de YouTube
     thumb: "https://images.unsplash.com/photo-1552664730-d307ca884978?w=500&h=310&fit=crop",
     desc: "Qué preguntan en la embajada, qué documentos llevar y cómo responder con confianza para tu programa Work and Travel.",
   },
@@ -145,24 +145,24 @@ const VIDEOS = [
   {
     id: "licencia",
     titulo: "Renovar tu licencia de conducción",
-    entidad: "ANT", dur: "6:12",
-    yt: "",
+    entidad: "ANT", dur: "3:54",
+    yt: "I_g75LBN09Q",
     thumb: "https://images.unsplash.com/photo-1449965408869-eaa3f722e40d?w=500&h=310&fit=crop",
     desc: "Turno en línea, exámenes requeridos y qué llevar el día de la cita.",
   },
   {
     id: "antecedentes",
     titulo: "Certificado de antecedentes penales",
-    entidad: "Ministerio del Interior", dur: "5:08",
-    yt: "",
+    entidad: "Ministerio del Interior", dur: "4:19",
+    yt: "YNH2r0q9Nwg",
     thumb: "https://images.unsplash.com/photo-1450101499163-c8848c66ca85?w=500&h=310&fit=crop",
     desc: "Cómo descargarlo en línea en menos de 10 minutos y validarlo.",
   },
   {
     id: "visa",
     titulo: "Preparar tu solicitud de visa de turismo",
-    entidad: "Cancillería", dur: "7:45",
-    yt: "",
+    entidad: "Cancillería", dur: "11:09",
+    yt: "pK8DW8E-hm8",
     thumb: "https://images.unsplash.com/photo-1436491865332-7a61a109cc05?w=500&h=310&fit=crop",
     desc: "Documentos de respaldo, prueba de solvencia y errores frecuentes que causan negativas.",
   },
