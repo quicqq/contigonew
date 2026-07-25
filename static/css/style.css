@@ -13,10 +13,12 @@
   --sh-lg:0 12px 32px rgba(15,23,42,.12);
 }
 *{box-sizing:border-box;margin:0;padding:0}
+html,body{max-width:100%;overflow-x:hidden}
 body{font-family:'Inter',-apple-system,sans-serif;background:var(--bg);color:var(--ink);
   -webkit-font-smoothing:antialiased;line-height:1.5}
+img{max-width:100%;height:auto}
 a{text-decoration:none;color:inherit}
-button,input,select,textarea{font-family:inherit;font-size:inherit}
+button,input,select,textarea{font-family:inherit;font-size:inherit;max-width:100%}
 button{cursor:pointer;border:none;background:none}
 h1,h2,h3,h4{font-family:'Sora',sans-serif;line-height:1.2}
 
@@ -341,19 +343,39 @@ textarea{resize:vertical;min-height:92px;line-height:1.5}
 }
 @media(max-width:820px){
   .nav{display:none}
+  .hamb{display:flex}
   .pro-grid{grid-template-columns:1fr}
   .inbox{grid-template-columns:1fr;height:auto}
-  .inbox-list{max-height:340px;border-right:none;border-bottom:1px solid var(--line)}
-  .thread{min-height:420px}
+  .inbox-list{max-height:280px;border-right:none;border-bottom:1px solid var(--line)}
+  .thread{min-height:70vh}
   .hero{padding:30px 24px}
   .hero h1{font-size:26px}
   .wrap{padding:18px 16px 50px}
   .topbar-in{padding:0 16px}
   .land-card{padding:38px 26px}
   .land-title{font-size:30px}
+  /* En movil, los inputs con fuente <16px hacen que iOS auto-haga zoom.
+     Se fijan en 16px para evitar ese zoom molesto al enfocar. */
+  input,select,textarea{font-size:16px}
 }
 @media(max-width:560px){
   .vid-grid,.feat-grid,.kpi-row,.role-2,.land-feats{grid-template-columns:1fr}
   .hero-search{flex-direction:column}
   .user-chip span{display:none}
+  .logo-sub{display:none}
+}
+
+/* ---- Menú hamburguesa (móvil) ---- */
+.hamb{display:none;align-items:center;justify-content:center;width:42px;height:42px;
+  border-radius:11px;border:1px solid var(--line);background:var(--card);flex-shrink:0}
+.mobile-menu{display:none;position:sticky;top:64px;z-index:40;background:var(--card);
+  border-bottom:1px solid var(--line);box-shadow:var(--sh-md);flex-direction:column;padding:8px}
+.mobile-menu.open{display:flex}
+.mobile-menu a{padding:13px 16px;border-radius:10px;font-weight:600;font-size:15px;color:var(--ink-2)}
+.mobile-menu a:active{background:var(--brand-light);color:var(--brand-2)}
+
+/* ---- Barra de acción y fases: fijas arriba del chat, no se pierden al scrollear ---- */
+@media(max-width:820px){
+  .th-head{position:sticky;top:0;z-index:20;background:var(--card);
+    border-bottom:1px solid var(--line);max-height:52vh;overflow-y:auto}
 }
